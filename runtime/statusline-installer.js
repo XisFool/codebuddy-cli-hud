@@ -23,6 +23,16 @@ function buildStatusLineCommand(platform, hudBin, nodeExe) {
   return `"${escapeShellArg(nodeExe)}" "${escapeShellArg(hudBin)}"`;
 }
 
+// The shim bakes the absolute node path captured at setup time instead of a
+// bare `node`: the host may invoke the statusLine with a PATH that differs
+// from the user's shell (nvm/fnm/volta installs, GUI-spawned processes), where
+// `node` silently resolves to nothing and the HUD renders blank. `%` is
+// batch-escaped to `%%` — cmd.exe collapses it back to a literal percent at
+// parse time, so a node install under a %-containing directory still resolves.
+function buildCmdShimContent(nodeExe) {
+  return '@echo off\r\n"' + String(nodeExe).replace(/%/g, '%%') + '" "%~dp0codebuddy-hud.js" %*\r\n';
+}
+
 function setup() {
   const settingsPath = getSettingsPath();
   const hudBin = path.join(__dirname, 'bin', 'codebuddy-hud.js');
@@ -50,7 +60,7 @@ function setup() {
   let command;
   if (process.platform === 'win32') {
     const cmdShim = hudBin.replace(/\.js$/, '.cmd');
-    const shimContent = '@echo off\r\nnode "%~dp0codebuddy-hud.js" %*\r\n';
+    const shimContent = buildCmdShimContent(process.execPath);
     try {
       fs.writeFileSync(cmdShim, shimContent);
       console.log(`Created Windows shim: ${cmdShim}`);
@@ -85,4 +95,4 @@ function setup() {
   console.log('\ncodebuddy-cli-hud setup complete.');
 }
 
-module.exports = { setup, buildStatusLineCommand };
+module.exports = { setup, buildStatusLineCommand, buildCmdShimContent };

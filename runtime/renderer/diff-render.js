@@ -2,7 +2,12 @@
 
 const { color, dim, formatTokens, formatDurationMs, getThemeColor, RESET } = require('./format');
 
-function renderDiffSegment(diffStats, costData, config, glyphs, lang, creditsStr) {
+function formatCreditSpend(creditSpend) {
+  if (!Number.isFinite(creditSpend) || creditSpend < 0) return '';
+  return `${creditSpend.toFixed(2)} credits`;
+}
+
+function renderDiffSegment(diffStats, costData, config, glyphs, lang, creditSpend) {
   const parts = [];
   const display = (config && config.display) || {};
 
@@ -13,9 +18,10 @@ function renderDiffSegment(diffStats, costData, config, glyphs, lang, creditsStr
   const totalMs = (costData && costData.totalDurationMs) || 0;
   const apiMs = (costData && costData.apiDurationMs) || 0;
   const hasCost = Boolean(costData && (totalCostUsd > 0 || totalMs > 0));
+  const hasCreditSpend = Number.isFinite(creditSpend) && creditSpend >= 0;
 
   // If there's no diff and no cost/duration data, omit Line 3 completely
-  if (!hasDiff && !hasCost) {
+  if (!hasDiff && !hasCost && !hasCreditSpend) {
     return '';
   }
 
@@ -26,21 +32,15 @@ function renderDiffSegment(diffStats, costData, config, glyphs, lang, creditsStr
     const addStr = added > 0 ? `${addColor}+${formatTokens(added)}${RESET}` : '';
     const remStr = removed > 0 ? `${remColor}-${formatTokens(removed)}${RESET}` : '';
     const diffStr = [addStr, remStr].filter(Boolean).join(' ');
-    if (diffStr) parts.push(diffStr);
+    if (diffStr) parts.push(`${dim((glyphs && glyphs.diffIcon) || '')}${diffStr}`);
   }
 
   // 2. Cost / Credits
   if (display.showCost !== false) {
-    if (totalCostUsd > 0) {
+    if (hasCreditSpend) {
+      parts.push(color(formatCreditSpend(creditSpend), 'yellow'));
+    } else if (totalCostUsd > 0) {
       parts.push(color(`$${totalCostUsd.toFixed(2)}`, 'yellow'));
-    } else if (creditsStr && (hasDiff || hasCost)) {
-      const numMatch = creditsStr.match(/([\d.]+)/);
-      const numVal = numMatch ? parseFloat(numMatch[1]) : 0;
-      if (numVal > 0) {
-        parts.push(color(creditsStr, 'yellow'));
-      } else {
-        parts.push(dim(creditsStr));
-      }
     }
   }
 
@@ -57,4 +57,4 @@ function renderDiffSegment(diffStats, costData, config, glyphs, lang, creditsStr
   return parts.join(`  \x1b[90m${glyphs.vbar}\x1b[0m  `);
 }
 
-module.exports = { renderDiffSegment };
+module.exports = { renderDiffSegment, formatCreditSpend };

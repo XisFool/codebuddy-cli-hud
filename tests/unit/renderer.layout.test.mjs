@@ -71,6 +71,7 @@ describe('renderHUD', () => {
   it('line 2 contains token info and progress bar', () => {
     const output = renderHUD(fullPayload, defaultConfig);
     const line2 = output.split('\n')[1];
+    assert.ok(line2.includes('Token'));
     assert.ok(line2.includes('91k'));
     assert.ok(line2.includes('#') || line2.includes('\u2588'));
   });
@@ -207,5 +208,59 @@ describe('renderHUD — tool activity merged into line 4', () => {
     const payload = { ...fullPayload, transcript_path: nodePath.join(tmpDir, 'nope.jsonl') };
     const output = renderHUD(payload, defaultConfig);
     assert.equal(output.split('\n').length, 4);
+  });
+
+  it('uses one turn scan to render actual transcript credits', () => {
+    const creditTranscript = nodePath.join(tmpDir, 'credits.jsonl');
+    const user = JSON.stringify({ type: 'message', role: 'user', content: [] });
+    const usage = (credit) => JSON.stringify({
+      type: 'function_call', callId: 'credit-' + credit, name: 'Bash',
+      providerData: { rawUsage: { prompt_tokens: 1000, prompt_cache_hit_tokens: 900, credit } },
+    });
+    fs.writeFileSync(creditTranscript, [user, usage(1.25), usage(4.6)].join('\n') + '\n');
+    const payload = {
+      ...fullPayload,
+      cost: { ...fullPayload.cost, total_cost_usd: 0 },
+      transcript_path: creditTranscript,
+    };
+    const output = renderHUD(payload, defaultConfig);
+    assert.ok(output.includes('5.85 credits'), output);
+    assert.ok(!output.includes('0.00x credits'), output);
+  });
+});
+
+describe('effort label injection defence (hard constraint 5)', () => {
+  const config = {
+    theme: {}, display: { maxLines: 4 }, thresholds: {}, cacheHitThresholds: {},
+    defaultEffortLevel: 'medium',
+  };
+
+  it('never emits raw escapes carried by payload effort fields', () => {
+    const payload = {
+      model: { display_name: 'Hy4', id: 'hy4', effort: 'high\x1b[31m\x07\x1b]0;PWNED\x07' },
+      cwd: os.tmpdir(),
+      permission_mode: 'default',
+      context_window: { context_window_size: 1000000, used_percentage: 1, current_usage: { input_tokens: 1, output_tokens: 1 } },
+    };
+    const output = renderHUD(payload, config);
+    assert.ok(!output.includes('\x1b]0;PWNED'), 'OSC title sequence leaked');
+    assert.ok(!/\x1b\[31m/.test(output), 'raw SGR leaked');
+  });
+
+  it('never emits raw escapes carried by an untrusted project config defaultEffortLevel', () => {
+    const evilConfig = {
+      ...config,
+      defaultEffortLevel: 'max\x1b[2J\x1b[1;31mINJECT\x1b]8;;http://evil\x07',
+    };
+    const payload = {
+      model: { display_name: 'Hy4', id: 'hy4' },
+      cwd: os.tmpdir(),
+      permission_mode: 'default',
+      context_window: { context_window_size: 1000000, used_percentage: 1, current_usage: { input_tokens: 1, output_tokens: 1 } },
+    };
+    const output = renderHUD(payload, evilConfig);
+    assert.ok(!/\x1b\[2J/.test(output), 'clear-screen CSI leaked');
+    assert.ok(!/\x1b\]8;;http/.test(output), 'OSC-8 hyperlink leaked');
+    assert.ok(!output.includes('\x07'), 'BEL leaked');
   });
 });

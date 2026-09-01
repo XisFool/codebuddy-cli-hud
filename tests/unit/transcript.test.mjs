@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { getRecentToolActivity, getRecentUsageMetrics, getTurnUsageMetrics, extractUsageMetrics, MAX_TOTAL_BYTES } = require('../../runtime/transcript.js');
+const { getRecentToolActivity, getRecentUsageMetrics, getTurnUsageMetrics, getSessionUsageMetrics, extractUsageMetrics, MAX_TOTAL_BYTES } = require('../../runtime/transcript.js');
 
 let tmpDir;
 
@@ -242,6 +242,36 @@ describe('extractUsageMetrics — real providerData shapes', () => {
       realRawUsage.prompt_tokens);
   });
 
+  it('reads actual credit spend independently from cache telemetry', () => {
+    const m = extractUsageMetrics({
+      providerData: { rawUsage: { prompt_tokens: 1000, prompt_cache_hit_tokens: 900, credit: 1.25 } },
+    });
+    assert.equal(m.credit, 1.25);
+
+    const creditOnly = extractUsageMetrics({ providerData: { rawUsage: { credit: 0 } } });
+    assert.equal(creditOnly.credit, 0, 'an explicitly reported zero is real telemetry');
+    assert.equal(creditOnly.promptTokens, null);
+  });
+
+  it('rejects invalid credit telemetry', () => {
+    assert.equal(extractUsageMetrics({ providerData: { rawUsage: { credit: -1 } } }), null);
+    assert.equal(extractUsageMetrics({ providerData: { rawUsage: { credit: '1.25' } } }), null);
+  });
+
+  it('reads cached_tokens from rawUsage.prompt_tokens_details when prompt_cache_hit_tokens absent', () => {
+    const m = extractUsageMetrics({
+      providerData: {
+        rawUsage: {
+          prompt_tokens: 80000,
+          prompt_tokens_details: { cached_tokens: 72000 },
+        },
+      },
+    });
+    assert.equal(m.hitTokens, 72000);
+    assert.equal(m.promptTokens, 80000);
+    assert.equal(m.source, 'rawUsage');
+  });
+
   it('falls back to usage.inputTokensDetails when rawUsage absent', () => {
     const m = extractUsageMetrics({
       providerData: {
@@ -319,9 +349,15 @@ describe('getTurnUsageMetrics — per-turn aggregation', () => {
   const userMsg = (text) => JSON.stringify({
     type: 'message', role: 'user', content: [{ type: 'input_text', text }],
   });
-  const call = (prompt, hit) => JSON.stringify({
+  const call = (prompt, hit, credit) => JSON.stringify({
     type: 'function_call', callId: 'c' + prompt, name: 'Bash',
-    providerData: { rawUsage: { prompt_tokens: prompt, prompt_cache_hit_tokens: hit } },
+    providerData: {
+      rawUsage: {
+        prompt_tokens: prompt,
+        prompt_cache_hit_tokens: hit,
+        ...(credit === undefined ? {} : { credit }),
+      },
+    },
   });
 
   it('aggregates every call in the current turn', () => {
@@ -369,6 +405,22 @@ describe('getTurnUsageMetrics — per-turn aggregation', () => {
     assert.equal(m.hitTokens, 90000);
   });
 
+  it('aggregates actual credits without crossing the user-turn boundary', () => {
+    const p = writeTmp('turn-credits.jsonl', [
+      userMsg('first question'),
+      call(1000, 900, 10),
+      userMsg('second question'),
+      call(1000, 950, 1.25),
+      call(2000, 1800, 4.6),
+      call(3000, 2700, 0),
+    ].join('\n') + '\n');
+
+    const m = getTurnUsageMetrics(p);
+    assert.equal(m.callCount, 3);
+    assert.equal(m.creditCallCount, 3);
+    assert.equal(m.credits, 5.85);
+  });
+
   it('returns null when the transcript has no usage blocks', () => {
     const p = writeTmp('turn-empty.jsonl',
       userMsg('hi') + '\n' + JSON.stringify({ type: 'function_call', callId: 'x', name: 'Read' }) + '\n');
@@ -387,5 +439,77 @@ describe('getTurnUsageMetrics — per-turn aggregation', () => {
     assert.equal(m.callCount, 2);
     assert.equal(m.hitTokens, 2000);
     assert.equal(m.promptTokens, 3000);
+  });
+
+  it('collects the previous completed turn when the file ends with an unresponded user message', () => {
+    // Reproduces the idle/input state where a new user prompt has been appended
+    // to transcript but the assistant has not made any API calls yet.
+    const p = writeTmp('turn-trailing-user.jsonl', [
+      userMsg('first turn'),
+      call(50000, 40000),
+      call(50000, 45000),
+      userMsg('second turn pending'),
+    ].join('\n') + '\n');
+
+    const m = getTurnUsageMetrics(p);
+    assert.equal(m.callCount, 2);
+    assert.equal(m.promptTokens, 100000);
+    assert.equal(m.hitTokens, 85000);
+  });
+
+  it('handles multiple trailing user messages and snapshot entries at EOF', () => {
+    const snapshot = JSON.stringify({ type: 'file-history-snapshot', isSnapshotUpdate: false });
+    const p = writeTmp('turn-trailing-multi.jsonl', [
+      userMsg('turn 1'),
+      call(100000, 95000),
+      userMsg('system reminder'),
+      userMsg('/commit command'),
+      snapshot,
+    ].join('\n') + '\n');
+
+    const m = getTurnUsageMetrics(p);
+    assert.equal(m.callCount, 1);
+    assert.equal(m.promptTokens, 100000);
+    assert.equal(m.hitTokens, 95000);
+  });
+});
+
+describe('getSessionUsageMetrics — incremental session aggregation', () => {
+  const call = (id, credit) => JSON.stringify({
+    type: 'function_call', callId: id, name: 'Bash',
+    providerData: { rawUsage: { credit } },
+  });
+
+  it('sums credits across every turn and only scans appended lines thereafter', () => {
+    const p = writeTmp('session-credits.jsonl', call('a', 1.25) + '\n' + call('b', 4.6) + '\n');
+    const state = path.join(tmpDir, 'session-state.json');
+    let m = getSessionUsageMetrics(p, { statePath: state });
+    assert.equal(m.credits, 5.85);
+    assert.equal(m.creditCallCount, 2);
+    fs.appendFileSync(p, call('c', 0) + '\n');
+    m = getSessionUsageMetrics(p, { statePath: state });
+    assert.equal(m.credits, 5.85);
+    assert.equal(m.creditCallCount, 3);
+    fs.appendFileSync(p, call('d', 2) + '\n');
+    m = getSessionUsageMetrics(p, { statePath: state });
+    assert.equal(m.credits, 7.85);
+    assert.equal(m.creditCallCount, 4);
+  });
+
+  it('rebuilds from scratch when state is corrupt or transcript is truncated', () => {
+    const p = writeTmp('session-rebuild.jsonl', call('a', 2) + '\n');
+    const state = path.join(tmpDir, 'session-rebuild-state.json');
+    assert.equal(getSessionUsageMetrics(p, { statePath: state }).credits, 2);
+    fs.writeFileSync(state, '{not json');
+    assert.equal(getSessionUsageMetrics(p, { statePath: state }).credits, 2);
+    fs.writeFileSync(p, call('new', 3) + '\n');
+    assert.equal(getSessionUsageMetrics(p, { statePath: state }).credits, 3);
+  });
+
+  it('returns null when no valid credit telemetry exists', () => {
+    const p = writeTmp('session-no-credit.jsonl', JSON.stringify({ providerData: { rawUsage: { prompt_tokens: 1 } } }) + '\n');
+    const m = getSessionUsageMetrics(p, { statePath: path.join(tmpDir, 'session-no-credit-state.json') });
+    assert.equal(m.credits, null);
+    assert.equal(m.creditCallCount, 0);
   });
 });

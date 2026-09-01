@@ -2,12 +2,13 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getSettingsPath, getCacheStatePath } = require('./paths');
+const { getSettingsPath, getCacheStatePath, getCreditStatePath } = require('./paths');
 
 function uninstall() {
   const settingsPath = getSettingsPath();
   const backupPath = settingsPath + '.bak.codebuddy-hud';
   const cachePath = getCacheStatePath();
+  const creditPath = getCreditStatePath();
   const hudBin = path.join(__dirname, 'bin', 'codebuddy-hud.js');
   const cmdShim = hudBin.replace(/\.js$/, '.cmd');
 
@@ -47,6 +48,15 @@ function uninstall() {
     if (fs.existsSync(cachePath)) {
       fs.unlinkSync(cachePath);
       cleaned.push(`Removed cache state: ${cachePath}`);
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    if (fs.existsSync(creditPath)) {
+      fs.unlinkSync(creditPath);
+      cleaned.push(`Removed credit state: ${creditPath}`);
     }
   } catch {
     // ignore

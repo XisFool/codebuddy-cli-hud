@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { resolveEffortLevel, resolveCredits, resetModelInfoCache } = require('../../runtime/model-info.js');
+const { resolveEffortLevel, resolveCreditSpend, resetModelInfoCache } = require('../../runtime/model-info.js');
 
 let originalSettingsPath;
 
@@ -114,42 +114,53 @@ describe('resolveEffortLevel', () => {
   });
 
   it('normalizes effort to lowercase', () => {
-    const data = { reasoning_effort: 'MAXIMUM' };
-    assert.equal(resolveEffortLevel(data), 'maximum');
+    const data = { reasoning_effort: 'MAX' };
+    assert.equal(resolveEffortLevel(data), 'max');
+  });
+
+  it('rejects non-whitelisted effort values and falls through to inference', () => {
+    // 'MAXIMUM' is not a known level: the value must be discarded, not shown.
+    const data = { reasoning_effort: 'MAXIMUM', model: { id: 'gpt-5-turbo' } };
+    assert.equal(resolveEffortLevel(data), 'high');
+  });
+
+  it('rejects an injected effort value from any source', () => {
+    const data = { reasoning_effort: 'high\x1b[2J\x1b]0;pwned\x07', model: { id: 'unknown-model-xyz' } };
+    const config = { defaultEffortLevel: 'max\x1b[2J\x1b[1;31mINJECT' };
+    assert.equal(resolveEffortLevel(data, config), null);
+  });
+
+  it('rejects non-whitelisted defaultEffortLevel from untrusted project config', () => {
+    const data = { model: { id: 'unknown-model-xyz' } };
+    const config = { defaultEffortLevel: 'max\x1b[2J\x1b[1;31mINJECT\x1b]8;;http://evil\x07' };
+    assert.equal(resolveEffortLevel(data, config), null);
+  });
+
+  it('rejects non-string effort values', () => {
+    const data = { reasoning_effort: { malicious: true }, model: { id: 'unknown-model-xyz' } };
+    const config = { defaultEffortLevel: 5 };
+    assert.equal(resolveEffortLevel(data, config), null);
   });
 });
 
-describe('resolveCredits', () => {
-  it('returns USD cost when totalCostUsd > 0', () => {
-    const result = resolveCredits({}, 0.5);
-    assert.equal(result, '$0.50');
-  });
-
-  it('returns formatted credits from cost.credits number', () => {
+describe('resolveCreditSpend', () => {
+  it('returns actual credits from the payload', () => {
     const data = { cost: { credits: 2.5 } };
-    const result = resolveCredits(data, 0);
-    assert.equal(result, '2.50x credits');
+    assert.equal(resolveCreditSpend(data), 2.5);
   });
 
-  it('returns raw credits string when not a finite number', () => {
+  it('preserves a genuine zero-credit payload', () => {
+    assert.equal(resolveCreditSpend({ cost: { credits: 0 } }), 0);
+  });
+
+  it('returns null for non-numeric or negative credits', () => {
     const data = { cost: { credits: 'premium tier' } };
-    const result = resolveCredits(data, 0);
-    assert.equal(result, 'premium tier');
+    assert.equal(resolveCreditSpend(data), null);
+    assert.equal(resolveCreditSpend({ cost: { credits: -1 } }), null);
   });
 
-  it('returns default 0.00x credits when no data available', () => {
-    const result = resolveCredits({}, 0);
-    assert.equal(result, '0.00x credits');
-  });
-
-  it('returns default for null cbData and zero cost', () => {
-    const result = resolveCredits(null, 0);
-    assert.equal(result, '0.00x credits');
-  });
-
-  it('prefers USD over credits field', () => {
-    const data = { cost: { credits: 5 } };
-    const result = resolveCredits(data, 1.23);
-    assert.equal(result, '$1.23');
+  it('does not invent a zero or use model metadata as a spend fallback', () => {
+    assert.equal(resolveCreditSpend({}), null);
+    assert.equal(resolveCreditSpend(null), null);
   });
 });

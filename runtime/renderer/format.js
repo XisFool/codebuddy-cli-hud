@@ -138,7 +138,13 @@ function calculateTurnCacheMetrics(usage) {
   if (!usage || typeof usage !== 'object') return null;
 
   // Priority 1 — rawUsage (authoritative)
-  const hit = normalizeTokenCount(usage.prompt_cache_hit_tokens);
+  let hit = normalizeTokenCount(usage.prompt_cache_hit_tokens);
+  if (hit === null && usage.prompt_tokens_details) {
+    hit = normalizeTokenCount(usage.prompt_tokens_details.cached_tokens);
+  }
+  if (hit === null) {
+    hit = normalizeTokenCount(usage.cached_tokens);
+  }
   const prompt = normalizeTokenCount(usage.prompt_tokens);
   if (prompt !== null && prompt > 0 && hit !== null) {
     return {

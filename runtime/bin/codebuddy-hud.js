@@ -8,18 +8,46 @@ const { renderHUD } = require('../renderer');
 const { getErrorLogPath } = require('../paths');
 
 const TIMEOUT_MS = 1500;
+const LOG_MAX_BYTES = 1024 * 1024;
+
+// A stdout pipe that the host closed early (killed statusLine, `head -c 1`, …)
+// raises an async 'error' on process.stdout. Unhandled, it crashes the process
+// with exit 1 and dumps a stack onto stderr — breaking the "always exit 0,
+// never emit a broken state" contract. Swallowing it is the correct
+// degradation: the write is lost, but the process still exits cleanly.
+// Same guard for stderr (a closed stderr would crash a --setup/--uninstall
+// console.error the same way).
+process.stdout.on('error', () => {});
+process.stderr.on('error', () => {});
 
 function logError(err) {
   try {
     const logPath = getErrorLogPath();
     const ts = new Date().toISOString();
     const msg = `[${ts}] ${err && err.stack ? err.stack : String(err)}\n`;
+    // Rotate: a repeating error at the host's ~300ms cadence would otherwise
+    // grow the log without bound (~288k lines/day). Over the cap, restart the
+    // log with just the current entry (recent errors matter most).
+    try {
+      if (fs.statSync(logPath).size > LOG_MAX_BYTES) {
+        fs.writeFileSync(logPath, msg);
+        return;
+      }
+    } catch {
+      // missing file — fall through to append
+    }
     fs.appendFileSync(logPath, msg);
   } catch {
     // silently fail — never block exit
   }
 }
 
+// Render, then exit with code 0 WITHOUT calling process.exit(): stdout is a
+// pipe in statusLine mode, and pipe writes are asynchronous on POSIX, so an
+// immediate process.exit() can truncate the dashboard the host reads. Letting
+// the event loop drain flushes pending writes first. The 1500ms fallback timer
+// is unref'd and stdin is destroyed before rendering, so nothing keeps the
+// loop alive past the final write and the <1500ms contract still holds.
 function handleRender(rawStdin) {
   try {
     const cbData = parseCodeBuddyInput(rawStdin);
@@ -32,20 +60,30 @@ function handleRender(rawStdin) {
   } catch (err) {
     logError(err);
   }
-  process.exit(0);
+  process.exitCode = 0;
 }
 
-// CLI subcommands
+// CLI subcommands. The statusLine contract is "always exit 0, never emit a
+// broken state", so setup/uninstall failures are logged instead of crashing
+// with a non-zero exit (a bare throw here used to escape as exit code 1).
 const args = process.argv.slice(2);
 if (args.includes('--setup')) {
-  require('../statusline-installer').setup();
-  process.exit(0);
-}
-if (args.includes('--uninstall')) {
-  require('../uninstall').uninstall();
-  process.exit(0);
-}
-if (args.includes('--status')) {
+  try {
+    require('../statusline-installer').setup();
+  } catch (err) {
+    logError(err);
+    console.error('setup failed (see codebuddy-hud-error.log)');
+  }
+  process.exitCode = 0;
+} else if (args.includes('--uninstall')) {
+  try {
+    require('../uninstall').uninstall();
+  } catch (err) {
+    logError(err);
+    console.error('uninstall failed (see codebuddy-hud-error.log)');
+  }
+  process.exitCode = 0;
+} else if (args.includes('--status')) {
   const samplePayload = JSON.stringify({
     model: { id: 'gpt-5.5', display_name: 'GPT-5.5' },
     permission_mode: 'default',
@@ -55,48 +93,51 @@ if (args.includes('--status')) {
     context_window: { total_input_tokens: 50000, total_output_tokens: 2000, context_window_size: 1000000, used_percentage: 5.2, current_usage: { input_tokens: 50000, output_tokens: 2000, cache_read_input_tokens: 30000, cache_creation_input_tokens: 0 } },
   });
   handleRender(samplePayload);
-  process.exit(0);
+} else {
+  // Normal statusLine mode: read stdin
+  const MAX_STDIN_SIZE = 1024 * 1024;
+  let stdinChunks = [];
+  let totalStdinSize = 0;
+  let handled = false;
+
+  const timer = setTimeout(() => {
+    if (!handled) {
+      handled = true;
+      // stdin may never close (host keeps the pipe open) — it is the only
+      // handle keeping the loop alive, so release it before rendering
+      process.stdin.destroy();
+      handleRender(stdinChunks.join(''));
+    }
+  }, TIMEOUT_MS);
+  timer.unref();
+
+  process.stdin.on('data', (chunk) => {
+    totalStdinSize += chunk.length;
+    if (totalStdinSize > MAX_STDIN_SIZE) {
+      handled = true;
+      clearTimeout(timer);
+      handleRender('');
+      process.stdin.destroy();
+      return;
+    }
+    stdinChunks.push(chunk.toString());
+  });
+
+  process.stdin.on('end', () => {
+    if (!handled) {
+      handled = true;
+      clearTimeout(timer);
+      handleRender(stdinChunks.join(''));
+    }
+  });
+
+  process.stdin.on('error', () => {
+    if (!handled) {
+      handled = true;
+      clearTimeout(timer);
+      handleRender('');
+    }
+  });
+
+  process.stdin.resume();
 }
-
-// Normal statusLine mode: read stdin
-const MAX_STDIN_SIZE = 1024 * 1024;
-let stdinChunks = [];
-let totalStdinSize = 0;
-let handled = false;
-
-const timer = setTimeout(() => {
-  if (!handled) {
-    handled = true;
-    handleRender(stdinChunks.join(''));
-  }
-}, TIMEOUT_MS);
-
-process.stdin.on('data', (chunk) => {
-  totalStdinSize += chunk.length;
-  if (totalStdinSize > MAX_STDIN_SIZE) {
-    handled = true;
-    clearTimeout(timer);
-    handleRender('');
-    process.stdin.destroy();
-    return;
-  }
-  stdinChunks.push(chunk.toString());
-});
-
-process.stdin.on('end', () => {
-  if (!handled) {
-    handled = true;
-    clearTimeout(timer);
-    handleRender(stdinChunks.join(''));
-  }
-});
-
-process.stdin.on('error', () => {
-  if (!handled) {
-    handled = true;
-    clearTimeout(timer);
-    handleRender('');
-  }
-});
-
-process.stdin.resume();

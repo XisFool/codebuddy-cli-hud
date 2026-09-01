@@ -1,6 +1,9 @@
 import test, { describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import os from 'node:os';
+import nodePath from 'node:path';
 
 const require = createRequire(import.meta.url);
 const { supportsUnicode, detectUnicodeSupport, selectGlyphs, resetCache } =
@@ -33,6 +36,45 @@ describe('supportsUnicode', () => {
   test('detects unicode support or falls back cleanly', () => {
     const result = supportsUnicode();
     assert.equal(typeof result, 'boolean');
+  });
+});
+
+describe('supportsUnicode state-file cache (win32 probe)', () => {
+  const originalEnv = Object.assign({}, process.env);
+  let tmpHome;
+
+  beforeEach(() => {
+    resetCache();
+    delete process.env.CODEBUDDY_HUD_FORCE_ASCII;
+    delete process.env.CODEBUDDY_HUD_FORCE_UNICODE;
+    tmpHome = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'hud-enc-test-'));
+    process.env.CODEBUDDY_HOME = tmpHome;
+  });
+
+  afterEach(() => {
+    process.env = Object.assign({}, originalEnv);
+    resetCache();
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  test('persists the probe result to the state file', () => {
+    const result = supportsUnicode();
+    assert.equal(typeof result, 'boolean');
+    const cachePath = nodePath.join(tmpHome, 'codebuddy-hud-cache-state.json');
+    assert.ok(fs.existsSync(cachePath), 'state file was not written');
+    const data = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+    assert.equal(data.unicodeSupported, result);
+  });
+
+  test('reads a pre-seeded state file instead of probing', { skip: process.platform !== 'win32' }, () => {
+    // This machine's console is UTF-8 (chcp would answer true), so a seeded
+    // `false` can only be observed if the cache is actually consulted.
+    fs.writeFileSync(
+      nodePath.join(tmpHome, 'codebuddy-hud-cache-state.json'),
+      JSON.stringify({ unicodeSupported: false, savedAt: 'seed' })
+    );
+    resetCache();
+    assert.equal(supportsUnicode(), false);
   });
 });
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { buildStatusLineCommand } = require('../../runtime/statusline-installer.js');
+const { buildStatusLineCommand, buildCmdShimContent } = require('../../runtime/statusline-installer.js');
 
 // POSIX fixtures use forward slashes; win32 fixtures use C:\... style.
 const POSIX_NODE = '/usr/bin/node';
@@ -105,5 +105,34 @@ describe('buildStatusLineCommand', () => {
 
     assert.equal(command, '"/usr/bin/node" "/opt/a\\\\\\$b/codebuddy-hud.js"');
     assert.ok(!command.includes('\\\\\\\\'));
+  });
+});
+
+describe('buildCmdShimContent', () => {
+  test('bakes the absolute node path instead of relying on PATH', () => {
+    const shim = buildCmdShimContent('C:\\Program Files\\nodejs\\node.exe');
+
+    assert.equal(shim, '@echo off\r\n"C:\\Program Files\\nodejs\\node.exe" "%~dp0codebuddy-hud.js" %*\r\n');
+    assert.ok(!/\r?\nnode /.test(shim), 'bare `node` must not appear');
+  });
+
+  test('handles a node path containing spaces via quoting', () => {
+    const shim = buildCmdShimContent('D:\\My Tools\\node\\node.exe');
+
+    assert.ok(shim.includes('"D:\\My Tools\\node\\node.exe"'));
+  });
+
+  test('uses CRLF line endings', () => {
+    const shim = buildCmdShimContent('/usr/bin/node');
+
+    assert.ok(shim.includes('\r\n'));
+    assert.ok(!/[^\r]\n/.test(shim));
+  });
+
+  test('batch-escapes % in the node path so cmd.exe resolves it literally', () => {
+    const shim = buildCmdShimContent('D:\\pct%var\\node.exe');
+
+    assert.ok(shim.includes('"D:\\pct%%var\\node.exe"'), 'percent must be doubled in the shim');
+    assert.ok(!shim.includes('pct%var'), 'single % would be eaten or expanded by cmd.exe');
   });
 });

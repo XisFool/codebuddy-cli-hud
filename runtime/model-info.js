@@ -1,12 +1,10 @@
 'use strict';
 
 const fs = require('fs');
-const path = require('path');
-const { getSettingsPath, resolveCodeBuddyPath } = require('./paths');
+const { getSettingsPath } = require('./paths');
 
 let _cachedSettingsEffort = null;
 let _cachedSettingsEffortTime = 0;
-let _cachedModelCreditsMap = null;
 
 function getSettingsReasoningEffort() {
   const now = Date.now();
@@ -26,45 +24,6 @@ function getSettingsReasoningEffort() {
   }
   _cachedSettingsEffort = null;
   return null;
-}
-
-function loadModelCreditsMap() {
-  if (_cachedModelCreditsMap !== null) {
-    return _cachedModelCreditsMap;
-  }
-  _cachedModelCreditsMap = {};
-  try {
-    const localStorageDir = resolveCodeBuddyPath('local_storage');
-    if (fs.existsSync(localStorageDir)) {
-      const files = fs.readdirSync(localStorageDir);
-      for (const file of files) {
-        if (file.endsWith('.info')) {
-          try {
-            const raw = fs.readFileSync(path.join(localStorageDir, file), 'utf8');
-            const data = JSON.parse(raw);
-            if (Array.isArray(data.models)) {
-              for (const m of data.models) {
-                if (m.id && m.credits) {
-                  // e.g. "x0.00 credits" -> "0.00x credits"
-                  const match = m.credits.match(/x?([\d.]+)\s*credits?/i);
-                  if (match) {
-                    _cachedModelCreditsMap[m.id.toLowerCase()] = `${parseFloat(match[1]).toFixed(2)}x credits`;
-                  } else {
-                    _cachedModelCreditsMap[m.id.toLowerCase()] = m.credits;
-                  }
-                }
-              }
-            }
-          } catch {
-            // ignore malformed entry
-          }
-        }
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return _cachedModelCreditsMap;
 }
 
 const MODEL_EFFORT_MAP = [
@@ -96,58 +55,61 @@ function inferEffortFromModel(cbData) {
  * @param {object} [config]
  * @returns {string|null}
  */
+const VALID_EFFORT_LEVELS = ['low', 'medium', 'high', 'max'];
+
+// Whitelist exit. The effort label reaches stdout essentially verbatim, and
+// one of its sources — config.defaultEffortLevel — comes from a
+// codebuddy-hud.config.json in the conversation cwd, i.e. from whatever repo
+// the user happens to be in. A value outside the whitelist is treated as
+// untrusted and the resolution chain falls through to the next source.
+function normalizeEffort(value) {
+  if (typeof value !== 'string') return null;
+  const v = value.trim().toLowerCase();
+  return VALID_EFFORT_LEVELS.includes(v) ? v : null;
+}
+
 function resolveEffortLevel(cbData, config) {
   if (!cbData) return null;
 
-  if (cbData.reasoning_effort) return String(cbData.reasoning_effort).toLowerCase();
-  if (cbData.model && cbData.model.effort) return String(cbData.model.effort).toLowerCase();
-  if (cbData.model && cbData.model.reasoning_effort) return String(cbData.model.reasoning_effort).toLowerCase();
+  let effort = normalizeEffort(cbData.reasoning_effort);
+  if (effort) return effort;
 
-  const settingsEffort = getSettingsReasoningEffort();
-  if (settingsEffort) return String(settingsEffort).toLowerCase();
+  if (cbData.model) {
+    effort = normalizeEffort(cbData.model.effort) || normalizeEffort(cbData.model.reasoning_effort);
+    if (effort) return effort;
+  }
 
-  const inferred = inferEffortFromModel(cbData);
-  if (inferred) return inferred;
+  effort = normalizeEffort(getSettingsReasoningEffort());
+  if (effort) return effort;
 
-  if (config && config.defaultEffortLevel) return String(config.defaultEffortLevel).toLowerCase();
+  effort = inferEffortFromModel(cbData);
+  if (effort) return effort;
 
-  return null;
+  return normalizeEffort(config && config.defaultEffortLevel);
 }
 
 /**
- * Resolve credits display string for model.
+ * Resolve an actual credit spend reported directly in the statusLine payload.
+ * Model metadata contains a rate (for example, "x0.17 credits"), not what the
+ * current conversation spent. Returning it here produced a misleading
+ * "0.00x credits" fallback when the metadata was absent or encoded.
  * @param {object} cbData
- * @param {number} totalCostUsd
- * @returns {string|null}
+ * @returns {number|null}
  */
-function resolveCredits(cbData, totalCostUsd) {
-  if (totalCostUsd && totalCostUsd > 0) {
-    return `$${totalCostUsd.toFixed(2)}`;
-  }
-
-  if (cbData && cbData.cost && cbData.cost.credits) {
-    const val = Number(cbData.cost.credits);
-    return Number.isFinite(val) ? `${val.toFixed(2)}x credits` : String(cbData.cost.credits);
-  }
-
-  const modelId = (cbData && cbData.model && (cbData.model.id || cbData.model.display_name)) || '';
-  if (modelId) {
-    const map = loadModelCreditsMap();
-    const credits = map[modelId.toLowerCase()];
-    if (credits) return credits;
-  }
-
-  return '0.00x credits';
+function resolveCreditSpend(cbData) {
+  const value = cbData && cbData.cost && cbData.cost.credits;
+  if (value === undefined || value === null || value === '') return null;
+  const credits = Number(value);
+  return Number.isFinite(credits) && credits >= 0 ? credits : null;
 }
 
 function resetModelInfoCache() {
   _cachedSettingsEffort = null;
   _cachedSettingsEffortTime = 0;
-  _cachedModelCreditsMap = null;
 }
 
 module.exports = {
   resolveEffortLevel,
-  resolveCredits,
+  resolveCreditSpend,
   resetModelInfoCache,
 };

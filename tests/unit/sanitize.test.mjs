@@ -38,4 +38,20 @@ describe('sanitizeTerminalText', () => {
     assert.equal(sanitizeTerminalText(42), '42');
     assert.equal(sanitizeTerminalText(true), 'true');
   });
+
+  it('strips C1 control bytes including the single-byte CSI 0x9B', () => {
+    const out = sanitizeTerminalText('x\u009B2yy');
+    assert.ok(!out.includes('\u009B'), 'C1 CSI survived');
+    assert.equal(sanitizeTerminalText('a\u0090b\u009cc'), 'abc');
+  });
+
+  it('strips bidi and invisible formatting controls', () => {
+    assert.ok(!sanitizeTerminalText('evil\u202Emore').includes('\u202E'), 'RTL override survived');
+    assert.equal(sanitizeTerminalText('a\u200eb\u200fc'), 'abc');
+    assert.ok(!sanitizeTerminalText('x\u2066y\u2069').includes('\u2066'));
+  });
+
+  it('still passes legitimate non-ASCII text through', () => {
+    assert.equal(sanitizeTerminalText('分支/中文/naïve'), '分支/中文/naïve');
+  });
 });

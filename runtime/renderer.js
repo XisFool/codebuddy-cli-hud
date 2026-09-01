@@ -8,8 +8,8 @@ const { sanitizeTerminalText } = require('./sanitize');
 const { selectGlyphs, supportsUnicode } = require('./encoding');
 const { extractTokenData, extractDiffStats, extractCostData, extractAgentData } = require('./parser');
 const { getGitStatus } = require('./git');
-const { resolveEffortLevel, resolveCredits } = require('./model-info');
-const { getRecentToolActivity, getTurnUsageMetrics } = require('./transcript');
+const { resolveEffortLevel, resolveCreditSpend } = require('./model-info');
+const { getRecentToolActivity, getTurnUsageMetrics, getSessionUsageMetrics } = require('./transcript');
 
 function renderHUD(cbData, config) {
   if (!cbData || !config) return '';
@@ -21,13 +21,32 @@ function renderHUD(cbData, config) {
   const glyphs = selectGlyphs(config.display.useNerdFonts, useUnicode);
   const divider = `  \x1b[90m${glyphs.vbar}\x1b[0m  `;
   const lines = [];
+  const tokenData = extractTokenData(cbData);
+
+  // The tail scan supplies the current-turn cache badge. Session credits use a
+  // separate incremental offset scan and do not reread already-counted bytes.
+  const needsTurnUsage = Boolean(cbData.transcript_path) && (
+    (tokenData && config.display.showCacheHitRate !== false)
+    || config.display.showCost !== false
+  );
+  const turnUsage = needsTurnUsage ? getTurnUsageMetrics(cbData.transcript_path, {
+    cwd,
+    tailBytes: config.display.toolActivityTailBytes,
+  }) : null;
+  const sessionUsage = (cbData.transcript_path && config.display.showCost !== false)
+    ? getSessionUsageMetrics(cbData.transcript_path, {
+      cwd,
+    }) : null;
 
   // Line 1: Identity & Environment (Clean English layout)
   const line1Parts = [];
   const rawModelName = (cbData.model && (cbData.model.display_name || cbData.model.id)) || 'unknown';
   const modelName = sanitizeTerminalText(rawModelName, 30);
   const effortLevel = resolveEffortLevel(cbData, config);
-  const effortLabel = effortLevel || '--';
+  // Belt-and-braces on top of the whitelist in resolveEffortLevel: hard
+  // constraint 5 says every external string is sanitized before it reaches
+  // stdout, and the effort label is the last unsanitized payload-derived value.
+  const effortLabel = sanitizeTerminalText(effortLevel || '--', 8);
   const effortIcon = (effortLevel && glyphs.effortIcons && glyphs.effortIcons[effortLevel])
     ? glyphs.effortIcons[effortLevel]
     : (glyphs.effortIcons && glyphs.effortIcons.medium) || '';
@@ -65,7 +84,6 @@ function renderHUD(cbData, config) {
   lines.push(line1Parts.join(divider));
 
   // Line 2: Context Window & Tokens (Hollow Progress Bar + Dimmed Breakdown)
-  const tokenData = extractTokenData(cbData);
   if (tokenData && config.display.showTokenBar !== false) {
     const line2Parts = [];
     const totalTokens = tokenData.inTokens + tokenData.outTokens;
@@ -76,7 +94,7 @@ function renderHUD(cbData, config) {
       `${dim('out: ')}${color(formatTokens(tokenData.outTokens), 'cyan')}`,
     ];
 
-    const tokenStr = `${color(formatTokens(totalTokens), 'cyan')} ${dim('(')}${tokenDetail.join(dot)}${dim(')')}`;
+    const tokenStr = `${color('Token ', 'cyan')}${color(formatTokens(totalTokens), 'cyan')} ${dim('(')}${tokenDetail.join(dot)}${dim(')')}`;
     line2Parts.push(tokenStr);
 
     const barWidth = config.display.progressBarWidth || 10;
@@ -103,10 +121,6 @@ function renderHUD(cbData, config) {
       // badge aggregates the whole current turn — sampling only the newest call
       // swings between ~0% (cold start) and ~99%.
       let cacheMetrics = null;
-      const turnUsage = getTurnUsageMetrics(cbData.transcript_path, {
-        cwd,
-        tailBytes: config.display.toolActivityTailBytes,
-      });
       if (turnUsage) {
         cacheMetrics = metricsFromPromptCache(turnUsage.hitTokens, turnUsage.promptTokens);
       }
@@ -128,8 +142,9 @@ function renderHUD(cbData, config) {
   const diffStats = extractDiffStats(cbData);
   const costData = extractCostData(cbData);
   const totalCostUsd = costData ? costData.totalCostUsd : 0;
-  const creditsStr = sanitizeTerminalText(resolveCredits(cbData, totalCostUsd), 30);
-  const line3 = renderDiffSegment(diffStats, costData, config, glyphs, 'en', creditsStr);
+  const transcriptCredits = sessionUsage && Number.isFinite(sessionUsage.credits) ? sessionUsage.credits : null;
+  const creditSpend = transcriptCredits === null ? resolveCreditSpend(cbData) : transcriptCredits;
+  const line3 = renderDiffSegment(diffStats, costData, config, glyphs, 'en', creditSpend);
   if (line3) lines.push(line3);
 
   // Line 4: Subagent/Task Status + Recent Tool Activity

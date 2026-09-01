@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { renderDiffSegment } = require('../../runtime/renderer/diff-render.js');
+const { renderDiffSegment, formatCreditSpend } = require('../../runtime/renderer/diff-render.js');
 
 const glyphs = { diffIcon: '[D] ', costIcon: '[$] ', clockIcon: '[t] ', vbar: '|' };
 
@@ -13,6 +13,7 @@ describe('renderDiffSegment', () => {
     const result = renderDiffSegment(diff, null, {}, glyphs, 'en');
     assert.ok(result.includes('+168'));
     assert.ok(result.includes('-1'));
+    assert.ok(result.includes('[D]'));
     assert.ok(result.includes('\x1b[32m')); // green for additions
     assert.ok(result.includes('\x1b[31m')); // red for removals
   });
@@ -29,6 +30,13 @@ describe('renderDiffSegment', () => {
     assert.ok(!result.includes('-'));
   });
 
+  it('uses the supplied Unicode delta icon for a diff summary', () => {
+    const unicodeGlyphs = { ...glyphs, diffIcon: '\u0394 ' };
+    const result = renderDiffSegment({ linesAdded: 50, linesRemoved: 1 }, null, {}, unicodeGlyphs, 'en');
+    const plain = result.replace(/\x1b\[[0-9;]*m/g, '');
+    assert.ok(plain.includes('\u0394 +50 -1'));
+  });
+
   it('includes cost when available', () => {
     const diff = { linesAdded: 10, linesRemoved: 0 };
     const cost = { totalCostUsd: 0.5, totalDurationMs: 0, apiDurationMs: 0 };
@@ -43,6 +51,29 @@ describe('renderDiffSegment', () => {
     assert.ok(result.includes('12m49s'));
     assert.ok(result.includes('API:'));
     assert.ok(result.includes('10m0s'));
+  });
+
+  it('shows actual credit spend when USD cost is unavailable', () => {
+    const result = renderDiffSegment({ linesAdded: 0, linesRemoved: 0 }, null, {}, glyphs, 'en', 5.85);
+    assert.ok(result.includes('5.85 credits'));
+  });
+
+  it('shows a genuine zero-credit telemetry value', () => {
+    const result = renderDiffSegment({ linesAdded: 0, linesRemoved: 0 }, null, {}, glyphs, 'en', 0);
+    assert.ok(result.includes('0.00 credits'));
+  });
+
+  it('omits an unknown credit spend rather than inventing 0.00x credits', () => {
+    const result = renderDiffSegment({ linesAdded: 0, linesRemoved: 0 }, null, {}, glyphs, 'en', null);
+    assert.equal(result, '');
+    assert.equal(formatCreditSpend(null), '');
+  });
+
+  it('keeps cumulative transcript credits ahead of USD cost', () => {
+    const cost = { totalCostUsd: 0.5, totalDurationMs: 0, apiDurationMs: 0 };
+    const result = renderDiffSegment({ linesAdded: 0, linesRemoved: 0 }, cost, {}, glyphs, 'en', 5.85);
+    assert.ok(result.includes('5.85 credits'));
+    assert.ok(!result.includes('$0.50'));
   });
 
   it('respects showDiffStats=false', () => {

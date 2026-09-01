@@ -2,7 +2,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { sanitizeTerminalText } = require('./sanitize');
+const { getCreditStatePath, getTranscriptUsageStatePath } = require('./paths');
 
 const DEFAULT_TAIL_BYTES = 16384;
 const MAX_TOTAL_BYTES = 262144;
@@ -139,7 +141,8 @@ function extractDetail(input) {
   return '';
 }
 
-// Extract cache/token counts from one transcript entry's providerData.
+// Extract cache/token counts and actual credit spend from one transcript
+// entry's providerData.
 //
 // Real CodeBuddy payloads carry cache telemetry ONLY here — never in the
 // statusLine payload's `context_window.current_usage`. Two shapes exist:
@@ -161,10 +164,19 @@ function extractUsageMetrics(entry) {
   if (!pd || typeof pd !== 'object') return null;
 
   const raw = pd.rawUsage;
+  const credit = raw && typeof raw === 'object'
+    && Number.isFinite(raw.credit) && raw.credit >= 0 ? raw.credit : null;
   if (raw && typeof raw === 'object'
       && Number.isFinite(raw.prompt_tokens) && raw.prompt_tokens > 0) {
-    const hit = Number.isFinite(raw.prompt_cache_hit_tokens) ? raw.prompt_cache_hit_tokens : 0;
-    return { hitTokens: hit, promptTokens: raw.prompt_tokens, source: 'rawUsage' };
+    let hit = Number.isFinite(raw.prompt_cache_hit_tokens) ? raw.prompt_cache_hit_tokens : null;
+    if (hit === null && raw.prompt_tokens_details && Number.isFinite(raw.prompt_tokens_details.cached_tokens)) {
+      hit = raw.prompt_tokens_details.cached_tokens;
+    }
+    if (hit === null && Number.isFinite(raw.cached_tokens)) {
+      hit = raw.cached_tokens;
+    }
+    if (hit === null) hit = 0;
+    return { hitTokens: hit, promptTokens: raw.prompt_tokens, credit, source: 'rawUsage' };
   }
 
   const u = pd.usage;
@@ -176,10 +188,18 @@ function extractUsageMetrics(entry) {
         if (d && Number.isFinite(d.cached_tokens)) cached += d.cached_tokens;
       }
     }
-    return { hitTokens: cached, promptTokens: u.inputTokens, source: 'usage' };
+    return { hitTokens: cached, promptTokens: u.inputTokens, credit, source: 'usage' };
   }
 
-  return null;
+  // Credit is independently useful even when a provider omits token cache
+  // telemetry. Keep it so Line 3 can show actual spend without inventing a
+  // model-rate fallback.
+  return credit === null ? null : {
+    hitTokens: null,
+    promptTokens: null,
+    credit,
+    source: 'rawUsage',
+  };
 }
 
 // One conversation turn spans MULTIPLE API calls (measured on a real session:
@@ -260,10 +280,9 @@ function collectUsageBackwards(transcriptPath, opts, limit, stopOnUserTurn) {
           continue; // corrupt line — skip
         }
 
-        // Turn boundary: a user message means we just passed the start of the
-        // current turn. Any usage it carries belongs to the new turn, so stop
-        // without collecting it.
-        if (stopOnUserTurn && entry.type === 'message' && entry.role === 'user') {
+        // Turn boundary: once we have collected calls in the active/recent turn,
+        // a user message marks the beginning of that turn.
+        if (stopOnUserTurn && collected.length > 0 && entry.type === 'message' && entry.role === 'user') {
           return collected;
         }
 
@@ -295,17 +314,135 @@ function getRecentUsageMetrics(transcriptPath, opts) {
 }
 
 // Aggregate every API call in the current conversation turn:
-// sum(hit) / sum(prompt) across the turn's calls.
+// sum(hit) / sum(prompt) and credits across the turn's calls.
 function getTurnUsageMetrics(transcriptPath, opts) {
   const collected = collectUsageBackwards(transcriptPath, opts, Infinity, true);
   if (collected.length === 0) return null;
   let hitTokens = 0;
   let promptTokens = 0;
+  let callCount = 0;
+  let credits = 0;
+  let creditCallCount = 0;
   for (const m of collected) {
-    hitTokens += m.hitTokens;
-    promptTokens += m.promptTokens;
+    if (Number.isFinite(m.hitTokens) && Number.isFinite(m.promptTokens)) {
+      hitTokens += m.hitTokens;
+      promptTokens += m.promptTokens;
+      callCount++;
+    }
+    if (Number.isFinite(m.credit)) {
+      credits += m.credit;
+      creditCallCount++;
+    }
   }
-  return { hitTokens, promptTokens, callCount: collected.length, source: 'turn' };
+  return {
+    hitTokens,
+    promptTokens,
+    callCount,
+    credits: creditCallCount > 0 ? credits : null,
+    creditCallCount,
+    source: 'turn',
+  };
+}
+
+// Keep a session-wide credit total without rescanning the entire transcript on
+// every ~300ms statusLine refresh. The state records a byte offset at the end
+// of the last complete JSONL line, so the next process only parses appended
+// data. A truncated/corrupt state or a transcript reset causes a full rebuild.
+function getSessionUsageMetrics(transcriptPath, opts) {
+  const options = opts || {};
+  if (!transcriptPath || typeof transcriptPath !== 'string' || transcriptPath.includes('\0')) return null;
+
+  let resolved = transcriptPath;
+  if (!path.isAbsolute(resolved) && typeof options.cwd === 'string' && options.cwd) {
+    resolved = path.resolve(options.cwd, resolved);
+  }
+
+  const statePath = typeof options.statePath === 'string' && options.statePath
+    ? options.statePath
+    : getCreditStatePath();
+  let fd = null;
+  try {
+    fd = fs.openSync(resolved, 'r');
+    const size = fs.fstatSync(fd).size;
+    let state = null;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      if (parsed && parsed.version === 1 && parsed.path === resolved
+          && Number.isSafeInteger(parsed.offset) && parsed.offset >= 0
+          && Number.isFinite(parsed.credits) && parsed.credits >= 0
+          && Number.isSafeInteger(parsed.creditCallCount) && parsed.creditCallCount >= 0
+          && parsed.offset <= size && typeof parsed.checkpointHash === 'string') {
+        const checkpointStart = Math.max(0, parsed.offset - 4096);
+        const checkpointLength = parsed.offset - checkpointStart;
+        const checkpoint = Buffer.alloc(checkpointLength);
+        if (checkpointLength > 0) fs.readSync(fd, checkpoint, 0, checkpointLength, checkpointStart);
+        const checkpointHash = crypto.createHash('sha256').update(checkpoint).digest('hex');
+        if (checkpointHash === parsed.checkpointHash) state = parsed;
+      }
+    } catch {
+      // Missing, corrupt, or partially written state is rebuilt below.
+    }
+
+    const offset = state ? state.offset : 0;
+    let total = state ? state.credits : 0;
+    let calls = state ? state.creditCallCount : 0;
+    if (size > offset) {
+      const buf = Buffer.alloc(size - offset);
+      fs.readSync(fd, buf, 0, buf.length, offset);
+      const text = buf.toString('utf8');
+      const lastNewline = text.lastIndexOf('\n');
+      const complete = lastNewline >= 0 ? text.slice(0, lastNewline + 1) : '';
+      if (complete) {
+        for (const line of complete.split('\n')) {
+          if (!line.trim()) continue;
+          try {
+            const metrics = extractUsageMetrics(JSON.parse(line));
+            if (metrics && Number.isFinite(metrics.credit)) {
+              total += metrics.credit;
+              calls++;
+            }
+          } catch {
+            // Ignore malformed transcript lines; later valid lines still count.
+          }
+        }
+      }
+      const newOffset = offset + Buffer.byteLength(complete, 'utf8');
+      const checkpointStart = Math.max(0, newOffset - 4096);
+      const checkpointLength = newOffset - checkpointStart;
+      const checkpoint = Buffer.alloc(checkpointLength);
+      if (checkpointLength > 0) fs.readSync(fd, checkpoint, 0, checkpointLength, checkpointStart);
+      state = {
+        version: 1,
+        path: resolved,
+        offset: newOffset,
+        credits: total,
+        creditCallCount: calls,
+        checkpointHash: crypto.createHash('sha256').update(checkpoint).digest('hex'),
+      };
+      try {
+        const dir = path.dirname(statePath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const tmpPath = `${statePath}.tmp-${process.pid}`;
+        fs.writeFileSync(tmpPath, JSON.stringify(state));
+        fs.renameSync(tmpPath, statePath);
+      } catch {
+        // State persistence is best-effort; this invocation still reports total.
+      }
+    }
+
+    if (!state) return null;
+    return {
+      credits: calls > 0 ? total : null,
+      creditCallCount: calls,
+      source: 'session',
+    };
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch { /* already closed */ }
+    }
+  }
 }
 
 function getRecentToolActivity(transcriptPath, opts) {
@@ -349,6 +486,7 @@ module.exports = {
   getRecentToolActivity,
   getRecentUsageMetrics,
   getTurnUsageMetrics,
+  getSessionUsageMetrics,
   extractUsageMetrics,
   DEFAULT_TAIL_BYTES,
   MAX_TOTAL_BYTES,
