@@ -19,7 +19,8 @@ GitHub 项目地址：[XisFool/codebuddy-cli-hud](https://github.com/XisFool/cod
 | `Token` | 当前 `context_window.current_usage` 的 `input_tokens + output_tokens`。括号内分别显示 `in` 与 `out`，不是整个会话累计。 |
 | 上下文进度 | 使用当前输入 Token、`context_window_size` 和 payload 的 `used_percentage`；不会把会话累计 Token 混入当前上下文。 |
 | `cache` | 优先从 transcript 的 `providerData` 聚合当前对话轮次的缓存命中率；无法取得 telemetry 时才回退 payload，缺字段显示 `cache --`。 |
-| `Δ +N -M` | 当前 payload 的 `cost.total_lines_added` 与 `cost.total_lines_removed`。不支持 Unicode 时使用 `[D]`。 |
+| `Δ +N -M` | 当前逻辑会话内的 `cost.total_lines_added` 与 `cost.total_lines_removed`。不支持 Unicode 时使用 `[D]`。 |
+| `⏱` / `API` | 当前逻辑会话内的 `cost.total_duration_ms` 与 `cost.total_api_duration_ms`。 |
 | `Credits` | **当前 `transcript_path` 所代表会话的累计实际消费**：汇总所有合法 `providerData.rawUsage.credit`。它不是模型倍率、不是单轮消费，也不是用户历史全局累计。 |
 
 `credit: 0` 是有效的零消费，会被保留。缺失、负数、`NaN`、无限值、字符串和其他非数字值不会计入。
@@ -27,6 +28,8 @@ GitHub 项目地址：[XisFool/codebuddy-cli-hud](https://github.com/XisFool/cod
 每个 transcript 都有独立状态文件，默认位于 `~/.codebuddy/codebuddy-hud-usage-state/`。后续刷新只读取新追加的 JSONL 内容；缓存损坏、文件截断、轮换或同大小覆盖都会自动重建。新会话会使用新的 transcript 状态，不会复用上一会话的累计值。
 
 如果 payload 没有 `transcript_path`，程序无法定位 transcript，因此无法读取累计 Credits；此时只会回退到 payload 明示的 `cost.credits`。若 transcript 中存在有效 credit，累计值优先于 payload 的美元估值或 credit 字段。没有可用消费数据时不会显示伪造的 `0.00x credits`。
+
+`/clear` 后，CodeBuddy 有时仍保留进程累计的 Diff 和耗时字段。HUD 会按 `transcript_path` 保存一个只含散列和数字基线的短期状态；当 `session_id` 变化、累计上下文回退，或当前上下文从较大值回到初始小值时，`Δ`、`⏱` 和 `API` 会从新的逻辑会话重新计数。Credits 仍严格按 transcript 累计；只有新的 `transcript_path` 才会开始一份新的 Credits 总额。
 
 ## 安装
 
@@ -120,7 +123,7 @@ node runtime/bin/codebuddy-hud.js --uninstall
 - `--setup`：注册 HUD，并在 Windows 创建或刷新本机 shim。
 - `--status`：使用示例 payload 预览 HUD。
 - `--uninstall`：有备份时恢复首次安装前的 settings；没有备份时只移除属于
-  `codebuddy-hud` 的 `statusLine`。同时清理 HUD 的本地缓存与 transcript usage state。
+  `codebuddy-hud` 的 `statusLine`。同时清理 HUD 的本地缓存、transcript usage state 与会话统计基线。
 
 所有命令异常都以 exit code `0` 静默降级；目录只读、权限不足、文件锁或状态文件写入失败不会让
 statusLine 崩溃。
@@ -158,6 +161,10 @@ Unicode 判定可用 `CODEBUDDY_HUD_FORCE_ASCII=1` 或
 没有 `transcript_path` 时无法读取会话累计值。检查 provider 是否写入数值型
 `providerData.rawUsage.credit`。
 
+**`/clear` 后 Diff 或计时没有重置**：确保清空后至少收到一次新的 statusLine payload。HUD 会在
+`session_id` 改变、`total_input_tokens` 回退，或当前上下文从较大值回到初始小值时建立新基线。若宿主未提供
+这些边界信号，HUD 会保留宿主 payload 的原始统计，避免把普通上下文压缩误判为 `/clear`。
+
 **Cache 显示 `cache --`**：provider 没有提供可计算的缓存字段时这是正常降级，不会伪造 0%。
 
 **Unicode 字形异常**：设置 `CODEBUDDY_HUD_FORCE_ASCII=1`，或删除 CodeBuddy 根目录下的
@@ -176,7 +183,8 @@ git diff --check
 ```
 
 `npm run verify` 只调用仓库脚本，不会安装依赖。测试覆盖 stdin 垃圾数据和过大输入、EPIPE、缓存和
-transcript 增量扫描、20MB transcript、安装备份/恢复、Windows `.cmd`、ASCII/Unicode 与终端注入清理。
+transcript 增量扫描、20MB transcript、`/clear` 会话统计基线、安装备份/恢复、Windows `.cmd`、ASCII/Unicode
+与终端注入清理。
 
 ## 安全边界与限制
 
@@ -187,4 +195,5 @@ transcript 增量扫描、20MB transcript、安装备份/恢复、Windows `.cmd`
 HUD 不发送网络请求，也不读取 transcript 之外的会话内容。工具活动只从 transcript 尾部滑窗读取，最多
 256KB；单条特别巨大的 JSONL 条目可能让较旧的工具活动或当前轮次 cache telemetry 不可见，此时会优雅
 回退。首次建立或损坏的 Credits state 会扫描对应 transcript，后续刷新只读取追加内容；state 写入失败只会
-失去缓存，不会中断 HUD。
+失去缓存，不会中断 HUD。`/clear` 没有可供 statusLine 直接消费的稳定 transcript 事件；当宿主同时不改变
+`session_id`、也不回退上下文计数时，HUD 无法可靠地区分它与普通对话，只能保留原始 Diff 和耗时。

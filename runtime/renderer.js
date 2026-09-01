@@ -10,6 +10,7 @@ const { extractTokenData, extractDiffStats, extractCostData, extractAgentData } 
 const { getGitStatus } = require('./git');
 const { resolveEffortLevel, resolveCreditSpend } = require('./model-info');
 const { getRecentToolActivity, getTurnUsageMetrics, getSessionUsageMetrics } = require('./transcript');
+const { getLogicalSessionCostData } = require('./session-stats');
 
 function renderHUD(cbData, config) {
   if (!cbData || !config) return '';
@@ -139,8 +140,18 @@ function renderHUD(cbData, config) {
   }
 
   // Line 3: Diff Stats, Credits & Duration
-  const diffStats = extractDiffStats(cbData);
-  const costData = extractCostData(cbData);
+  const rawDiffStats = extractDiffStats(cbData);
+  const rawCostData = extractCostData(cbData);
+  const sessionCostData = getLogicalSessionCostData(cbData, {
+    ...rawDiffStats,
+    ...(rawCostData || {}),
+  }, { cwd });
+  const diffStats = sessionCostData;
+  const costData = rawCostData ? {
+    ...rawCostData,
+    totalDurationMs: sessionCostData.totalDurationMs,
+    apiDurationMs: sessionCostData.apiDurationMs,
+  } : null;
   const totalCostUsd = costData ? costData.totalCostUsd : 0;
   const transcriptCredits = sessionUsage && Number.isFinite(sessionUsage.credits) ? sessionUsage.credits : null;
   const creditSpend = transcriptCredits === null ? resolveCreditSpend(cbData) : transcriptCredits;

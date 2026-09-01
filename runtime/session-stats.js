@@ -1,0 +1,213 @@
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { getSessionStatsStatePath } = require('./paths');
+
+const SESSION_STATS_VERSION = 1;
+const STATE_REFRESH_MS = 1000;
+const CLEAR_CONTEXT_MAX_TOKENS = 2048;
+const CLEAR_CONTEXT_PREVIOUS_MIN_TOKENS = 8192;
+
+function finiteNonNegative(value) {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return null;
+}
+
+function hashValue(value) {
+  return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function resolveTranscriptPath(transcriptPath, cwd) {
+  if (typeof transcriptPath !== 'string' || !transcriptPath || transcriptPath.includes('\0')) return null;
+  try {
+    return path.isAbsolute(transcriptPath)
+      ? path.resolve(transcriptPath)
+      : path.resolve(typeof cwd === 'string' && cwd ? cwd : process.cwd(), transcriptPath);
+  } catch {
+    return null;
+  }
+}
+
+// `session_id` is deliberately not used as the primary file name. Some hosts
+// retain a transcript while changing its session id after a clear; retaining
+// one checkpoint lets us spot that transition and reset the visible counters.
+function getSessionIdentity(cbData, cwd) {
+  const transcriptPath = resolveTranscriptPath(cbData && cbData.transcript_path, cwd);
+  if (transcriptPath) return `transcript:${transcriptPath}`;
+  if (cbData && typeof cbData.session_id === 'string' && cbData.session_id && !cbData.session_id.includes('\0')) {
+    return `session:${cbData.session_id}`;
+  }
+  return null;
+}
+
+function getResetSignal(cbData) {
+  const context = cbData && cbData.context_window;
+  const usage = context && typeof context === 'object' && context.current_usage;
+  return {
+    totalInputTokens: finiteNonNegative(context && typeof context === 'object' ? context.total_input_tokens : null),
+    currentInputTokens: finiteNonNegative(usage && typeof usage === 'object' ? usage.input_tokens : null),
+  };
+}
+
+function normalizeCost(costData) {
+  const cost = costData || {};
+  return {
+    linesAdded: finiteNonNegative(cost.linesAdded) || 0,
+    linesRemoved: finiteNonNegative(cost.linesRemoved) || 0,
+    totalDurationMs: finiteNonNegative(cost.totalDurationMs) || 0,
+    apiDurationMs: finiteNonNegative(cost.apiDurationMs) || 0,
+  };
+}
+
+function createBaseline(cost) {
+  return {
+    linesAdded: cost.linesAdded,
+    linesRemoved: cost.linesRemoved,
+    totalDurationMs: cost.totalDurationMs,
+    apiDurationMs: cost.apiDurationMs,
+  };
+}
+
+function normalizeBaseline(value) {
+  if (!value || typeof value !== 'object') return null;
+  const values = ['linesAdded', 'linesRemoved', 'totalDurationMs', 'apiDurationMs'];
+  if (values.some(key => finiteNonNegative(value[key]) === null)) return null;
+  return createBaseline(value);
+}
+
+function readState(statePath, identityHash) {
+  try {
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    if (!state || state.version !== SESSION_STATS_VERSION || state.identityHash !== identityHash) return null;
+    const baseline = normalizeBaseline(state.baseline);
+    if (!baseline || !state.signal || typeof state.signal !== 'object') return null;
+    return {
+      baseline,
+      sessionIdHash: typeof state.sessionIdHash === 'string' ? state.sessionIdHash : null,
+      signal: {
+        totalInputTokens: finiteNonNegative(state.signal.totalInputTokens),
+        currentInputTokens: finiteNonNegative(state.signal.currentInputTokens),
+      },
+      updatedAt: finiteNonNegative(state.updatedAt) || 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeState(statePath, state) {
+  try {
+    const dir = path.dirname(statePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const tmpPath = `${statePath}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(tmpPath, JSON.stringify(state));
+    fs.renameSync(tmpPath, statePath);
+  } catch {
+    // State persistence is optional. Rendering must never fail because a home
+    // directory is read-only or another HUD process is replacing this file.
+  }
+}
+
+function counterDropped(current, previous) {
+  return current !== null && previous !== null && current < previous;
+}
+
+function contextReturnedToInitial(current, previous) {
+  return current !== null && previous !== null
+    && current <= CLEAR_CONTEXT_MAX_TOKENS
+    && previous >= CLEAR_CONTEXT_PREVIOUS_MIN_TOKENS
+    && current < previous;
+}
+
+function costCounterDropped(cost, baseline) {
+  return cost.linesAdded < baseline.linesAdded
+    || cost.linesRemoved < baseline.linesRemoved
+    || cost.totalDurationMs < baseline.totalDurationMs
+    || cost.apiDurationMs < baseline.apiDurationMs;
+}
+
+function subtractBaseline(cost, baseline) {
+  return {
+    linesAdded: Math.max(0, cost.linesAdded - baseline.linesAdded),
+    linesRemoved: Math.max(0, cost.linesRemoved - baseline.linesRemoved),
+    totalDurationMs: Math.max(0, cost.totalDurationMs - baseline.totalDurationMs),
+    apiDurationMs: Math.max(0, cost.apiDurationMs - baseline.apiDurationMs),
+  };
+}
+
+// The host's cost fields are process-cumulative. `/clear` may preserve those
+// fields even though it starts a new conversation, so retain a per-transcript
+// baseline and subtract it only after a reliable reset signal.
+function getLogicalSessionCostData(cbData, costData, opts) {
+  const options = opts || {};
+  const cost = normalizeCost(costData);
+  const identity = getSessionIdentity(cbData, options.cwd);
+  if (!identity) return cost;
+
+  const identityHash = hashValue(identity);
+  let statePath;
+  try {
+    statePath = typeof options.statePath === 'string' && options.statePath
+      ? options.statePath
+      : getSessionStatsStatePath(identity);
+  } catch {
+    return cost;
+  }
+  const sessionIdHash = cbData && typeof cbData.session_id === 'string' && cbData.session_id
+    ? hashValue(cbData.session_id)
+    : null;
+  const signal = getResetSignal(cbData);
+  const previous = readState(statePath, identityHash);
+  let baseline = previous ? previous.baseline : createBaseline({
+    linesAdded: 0,
+    linesRemoved: 0,
+    totalDurationMs: 0,
+    apiDurationMs: 0,
+  });
+
+  const sessionIdChanged = Boolean(previous && sessionIdHash && previous.sessionIdHash
+    && sessionIdHash !== previous.sessionIdHash);
+  const inputCountersReset = Boolean(previous && (
+    counterDropped(signal.totalInputTokens, previous.signal.totalInputTokens)
+    || contextReturnedToInitial(signal.currentInputTokens, previous.signal.currentInputTokens)
+  ));
+  const hostCostCountersReset = Boolean(previous && costCounterDropped(cost, baseline));
+  const reset = sessionIdChanged || inputCountersReset || hostCostCountersReset;
+  // If only host cost counters fell, they already describe a new session and
+  // should remain visible. If the context/session reset while cumulative cost
+  // remains high, use that high value as the new baseline instead.
+  if (sessionIdChanged || inputCountersReset) baseline = createBaseline(cost);
+  else if (hostCostCountersReset) baseline = createBaseline({
+    linesAdded: 0,
+    linesRemoved: 0,
+    totalDurationMs: 0,
+    apiDurationMs: 0,
+  });
+
+  const now = Date.now();
+  if (!previous || reset || now - previous.updatedAt >= STATE_REFRESH_MS) {
+    writeState(statePath, {
+      version: SESSION_STATS_VERSION,
+      identityHash,
+      sessionIdHash,
+      baseline,
+      signal,
+      updatedAt: now,
+    });
+  }
+
+  return subtractBaseline(cost, baseline);
+}
+
+module.exports = {
+  getLogicalSessionCostData,
+  getSessionIdentity,
+  getResetSignal,
+  SESSION_STATS_VERSION,
+};

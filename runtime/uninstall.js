@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getSettingsPath, getCacheStatePath, getCreditStatePath, getTranscriptUsageStateDir } = require('./paths');
+const { getSettingsPath, getCacheStatePath, getCreditStatePath, getTranscriptUsageStateDir, getSessionStatsStateDir } = require('./paths');
 const { sanitizeTerminalText } = require('./sanitize');
 
 function uninstall(options) {
@@ -12,6 +12,7 @@ function uninstall(options) {
   const cachePath = getCacheStatePath();
   const creditPath = getCreditStatePath();
   const usageStateDir = getTranscriptUsageStateDir();
+  const sessionStatsStateDir = getSessionStatsStateDir();
   const hudBin = opts.hudBin || path.join(opts.runtimeDir || __dirname, 'bin', 'codebuddy-hud.js');
   const cmdShim = hudBin.replace(/\.js$/, '.cmd');
   const platform = opts.platform || process.platform;
@@ -64,6 +65,15 @@ function uninstall(options) {
     if (fs.existsSync(usageStateDir)) {
       fs.rmSync(usageStateDir, { recursive: true, force: true });
       cleaned.push(`Removed transcript usage state: ${sanitizeTerminalText(usageStateDir, 512)}`);
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    if (fs.existsSync(sessionStatsStateDir)) {
+      fs.rmSync(sessionStatsStateDir, { recursive: true, force: true });
+      cleaned.push(`Removed session statistics state: ${sanitizeTerminalText(sessionStatsStateDir, 512)}`);
     }
   } catch {
     // ignore

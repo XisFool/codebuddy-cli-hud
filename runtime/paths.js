@@ -32,6 +32,10 @@ function getTranscriptUsageStateDir() {
   return resolveCodeBuddyPath('codebuddy-hud-usage-state');
 }
 
+function getSessionStatsStateDir() {
+  return resolveCodeBuddyPath('codebuddy-hud-session-state');
+}
+
 // Keep usage checkpoints independent for each transcript. The HUD is spawned
 // by the host for every refresh and multiple workspaces may refresh at once;
 // a single shared checkpoint would allow one transcript to overwrite another.
@@ -39,6 +43,11 @@ function getTranscriptUsageStatePath(transcriptPath) {
   const normalized = typeof transcriptPath === 'string' ? path.resolve(transcriptPath) : '';
   const digest = crypto.createHash('sha256').update(normalized, 'utf8').digest('hex');
   return path.join(getTranscriptUsageStateDir(), `${digest}.json`);
+}
+
+function getSessionStatsStatePath(identity) {
+  const digest = crypto.createHash('sha256').update(String(identity || ''), 'utf8').digest('hex');
+  return path.join(getSessionStatsStateDir(), `${digest}.json`);
 }
 
 module.exports = {
@@ -50,4 +59,6 @@ module.exports = {
   getCreditStatePath,
   getTranscriptUsageStateDir,
   getTranscriptUsageStatePath,
+  getSessionStatsStateDir,
+  getSessionStatsStatePath,
 };

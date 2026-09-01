@@ -247,6 +247,61 @@ describe('renderHUD — tool activity merged into line 4', () => {
     assert.ok(output.includes('5.85 credits'), output);
     assert.ok(!output.includes('0.00x credits'), output);
   });
+
+  it('resets visible diff and duration after /clear while the transcript path remains stable', () => {
+    const clearTranscript = nodePath.join(tmpDir, 'clear-session.jsonl');
+    fs.writeFileSync(clearTranscript, '');
+    const beforeClear = {
+      ...fullPayload,
+      session_id: 'clear-session',
+      transcript_path: clearTranscript,
+      cost: {
+        total_cost_usd: 0,
+        total_lines_added: 1700,
+        total_lines_removed: 161,
+        total_duration_ms: 10020000,
+        total_api_duration_ms: 4980000,
+      },
+      context_window: {
+        ...fullPayload.context_window,
+        total_input_tokens: 100000,
+        current_usage: { ...fullPayload.context_window.current_usage, input_tokens: 90000 },
+      },
+    };
+    assert.ok(renderHUD(beforeClear, defaultConfig).includes('+1.7k'));
+
+    const afterClear = {
+      ...beforeClear,
+      context_window: {
+        ...beforeClear.context_window,
+        total_input_tokens: 0,
+        current_usage: { ...beforeClear.context_window.current_usage, input_tokens: 0 },
+      },
+    };
+    const clearedOutput = renderHUD(afterClear, defaultConfig);
+    assert.ok(!clearedOutput.includes('+1.7k'), clearedOutput);
+    assert.ok(!clearedOutput.includes('2h47m'), clearedOutput);
+
+    const nextTurn = {
+      ...afterClear,
+      cost: {
+        ...afterClear.cost,
+        total_lines_added: 1712,
+        total_lines_removed: 164,
+        total_duration_ms: 10045000,
+        total_api_duration_ms: 4989000,
+      },
+      context_window: {
+        ...afterClear.context_window,
+        total_input_tokens: 900,
+        current_usage: { ...afterClear.context_window.current_usage, input_tokens: 900 },
+      },
+    };
+    const nextOutput = renderHUD(nextTurn, defaultConfig);
+    assert.ok(nextOutput.includes('+12'), nextOutput);
+    assert.ok(nextOutput.includes('-3'), nextOutput);
+    assert.ok(nextOutput.includes('25s'), nextOutput);
+  });
 });
 
 describe('effort label injection defence (hard constraint 5)', () => {

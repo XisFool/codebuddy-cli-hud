@@ -9,6 +9,7 @@ import { execSync } from 'node:child_process';
 const require = createRequire(import.meta.url);
 const { buildStatusLineCommand, buildCmdShimContent, setup } = require('../../runtime/statusline-installer.js');
 const { uninstall } = require('../../runtime/uninstall.js');
+const { getSessionStatsStateDir } = require('../../runtime/paths.js');
 
 // POSIX fixtures use forward slashes; win32 fixtures use C:\... style.
 const POSIX_NODE = '/usr/bin/node';
@@ -182,11 +183,14 @@ test('setup preserves the first backup, refreshes the Windows shim, and uninstal
     const installed = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
     assert.equal(installed.statusLine.type, 'command');
     assert.equal(installed.statusLine.command, `"${cmdShim}"`);
+    fs.mkdirSync(getSessionStatsStateDir(), { recursive: true });
+    fs.writeFileSync(path.join(getSessionStatsStateDir(), 'state.json'), '{}');
 
     uninstall({ runtimeDir, platform: 'win32' });
     assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, 'utf8')), originalSettings);
     assert.equal(fs.existsSync(backupPath), false);
     assert.equal(fs.existsSync(cmdShim), false, 'uninstall should remove the generated Windows shim');
+    assert.equal(fs.existsSync(getSessionStatsStateDir()), false, 'uninstall should remove the session statistics state');
   } finally {
     if (originalSettingsPath === undefined) delete process.env.CODEBUDDY_SETTINGS_PATH;
     else process.env.CODEBUDDY_SETTINGS_PATH = originalSettingsPath;
