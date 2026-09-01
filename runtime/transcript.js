@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { sanitizeTerminalText } = require('./sanitize');
-const { getCreditStatePath, getTranscriptUsageStatePath } = require('./paths');
+const { getTranscriptUsageStatePath } = require('./paths');
 
 const DEFAULT_TAIL_BYTES = 16384;
 const MAX_TOTAL_BYTES = 262144;
@@ -344,6 +344,68 @@ function getTurnUsageMetrics(transcriptPath, opts) {
   };
 }
 
+const SESSION_STATE_VERSION = 1;
+const SESSION_HEAD_BYTES = 4096;
+
+function statIdentity(stat) {
+  return {
+    dev: String(stat.dev),
+    ino: String(stat.ino),
+    birthtimeMs: Number.isFinite(stat.birthtimeMs) ? stat.birthtimeMs : 0,
+  };
+}
+
+function hashBuffer(buffer) {
+  return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
+function readHeadHash(fd, size) {
+  const length = Math.min(size, SESSION_HEAD_BYTES);
+  if (length <= 0) return hashBuffer(Buffer.alloc(0));
+  const buffer = Buffer.alloc(length);
+  fs.readSync(fd, buffer, 0, length, 0);
+  return hashBuffer(buffer);
+}
+
+function readSessionState(statePath, resolved, identity, size, headHash, fd) {
+  try {
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    if (!state || state.version !== SESSION_STATE_VERSION || state.path !== resolved) return null;
+    if (!state.identity || state.identity.dev !== identity.dev
+        || state.identity.ino !== identity.ino
+        || state.identity.birthtimeMs !== identity.birthtimeMs) return null;
+    if (state.headHash !== headHash) return null;
+    if (!Number.isSafeInteger(state.offset) || state.offset < 0 || state.offset > size) return null;
+    if (!Number.isFinite(state.credits) || state.credits < 0) return null;
+    if (!Number.isSafeInteger(state.creditCallCount) || state.creditCallCount < 0) return null;
+
+    // A checkpoint hash catches in-place rewrites that preserve path, inode and
+    // size. It covers the bytes immediately before the saved offset.
+    const checkpointStart = Math.max(0, state.offset - SESSION_HEAD_BYTES);
+    const checkpointLength = state.offset - checkpointStart;
+    const checkpoint = Buffer.alloc(checkpointLength);
+    if (checkpointLength > 0) fs.readSync(fd, checkpoint, 0, checkpointLength, checkpointStart);
+    if (state.checkpointHash !== hashBuffer(checkpoint)) return null;
+    return state;
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionState(statePath, state) {
+  try {
+    const dir = path.dirname(statePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    // Unique temp files prevent concurrent HUD processes from overwriting one
+    // another's temporary contents before the final rename.
+    const tmpPath = `${statePath}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(tmpPath, JSON.stringify(state));
+    fs.renameSync(tmpPath, statePath);
+  } catch {
+    // Persistence is best effort; this invocation still returns its total.
+  }
+}
+
 // Keep a session-wide credit total without rescanning the entire transcript on
 // every ~300ms statusLine refresh. The state records a byte offset at the end
 // of the last complete JSONL line, so the next process only parses appended
@@ -353,48 +415,40 @@ function getSessionUsageMetrics(transcriptPath, opts) {
   if (!transcriptPath || typeof transcriptPath !== 'string' || transcriptPath.includes('\0')) return null;
 
   let resolved = transcriptPath;
-  if (!path.isAbsolute(resolved) && typeof options.cwd === 'string' && options.cwd) {
-    resolved = path.resolve(options.cwd, resolved);
+  try {
+    if (!path.isAbsolute(resolved) && typeof options.cwd === 'string' && options.cwd) {
+      resolved = path.resolve(options.cwd, resolved);
+    } else {
+      resolved = path.resolve(resolved);
+    }
+  } catch {
+    return null;
   }
 
   const statePath = typeof options.statePath === 'string' && options.statePath
     ? options.statePath
-    : getCreditStatePath();
+    : getTranscriptUsageStatePath(resolved);
   let fd = null;
   try {
     fd = fs.openSync(resolved, 'r');
-    const size = fs.fstatSync(fd).size;
-    let state = null;
-    try {
-      const parsed = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-      if (parsed && parsed.version === 1 && parsed.path === resolved
-          && Number.isSafeInteger(parsed.offset) && parsed.offset >= 0
-          && Number.isFinite(parsed.credits) && parsed.credits >= 0
-          && Number.isSafeInteger(parsed.creditCallCount) && parsed.creditCallCount >= 0
-          && parsed.offset <= size && typeof parsed.checkpointHash === 'string') {
-        const checkpointStart = Math.max(0, parsed.offset - 4096);
-        const checkpointLength = parsed.offset - checkpointStart;
-        const checkpoint = Buffer.alloc(checkpointLength);
-        if (checkpointLength > 0) fs.readSync(fd, checkpoint, 0, checkpointLength, checkpointStart);
-        const checkpointHash = crypto.createHash('sha256').update(checkpoint).digest('hex');
-        if (checkpointHash === parsed.checkpointHash) state = parsed;
-      }
-    } catch {
-      // Missing, corrupt, or partially written state is rebuilt below.
-    }
+    const stat = fs.fstatSync(fd);
+    const size = stat.size;
+    const identity = statIdentity(stat);
+    const headHash = readHeadHash(fd, size);
+    const cached = readSessionState(statePath, resolved, identity, size, headHash, fd);
 
-    const offset = state ? state.offset : 0;
-    let total = state ? state.credits : 0;
-    let calls = state ? state.creditCallCount : 0;
+    const offset = cached ? cached.offset : 0;
+    let total = cached ? cached.credits : 0;
+    let calls = cached ? cached.creditCallCount : 0;
+    let processedOffset = offset;
     if (size > offset) {
       const buf = Buffer.alloc(size - offset);
       fs.readSync(fd, buf, 0, buf.length, offset);
-      const text = buf.toString('utf8');
-      const lastNewline = text.lastIndexOf('\n');
-      const complete = lastNewline >= 0 ? text.slice(0, lastNewline + 1) : '';
-      if (complete) {
-        for (const line of complete.split('\n')) {
-          if (!line.trim()) continue;
+      let lineStart = 0;
+      let newline = buf.indexOf(0x0a, lineStart);
+      while (newline !== -1) {
+        const line = buf.subarray(lineStart, newline).toString('utf8').trim();
+        if (line) {
           try {
             const metrics = extractUsageMetrics(JSON.parse(line));
             if (metrics && Number.isFinite(metrics.credit)) {
@@ -405,35 +459,55 @@ function getSessionUsageMetrics(transcriptPath, opts) {
             // Ignore malformed transcript lines; later valid lines still count.
           }
         }
+        lineStart = newline + 1;
+        newline = buf.indexOf(0x0a, lineStart);
       }
-      const newOffset = offset + Buffer.byteLength(complete, 'utf8');
-      const checkpointStart = Math.max(0, newOffset - 4096);
-      const checkpointLength = newOffset - checkpointStart;
-      const checkpoint = Buffer.alloc(checkpointLength);
-      if (checkpointLength > 0) fs.readSync(fd, checkpoint, 0, checkpointLength, checkpointStart);
-      state = {
-        version: 1,
-        path: resolved,
-        offset: newOffset,
-        credits: total,
-        creditCallCount: calls,
-        checkpointHash: crypto.createHash('sha256').update(checkpoint).digest('hex'),
-      };
-      try {
-        const dir = path.dirname(statePath);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        const tmpPath = `${statePath}.tmp-${process.pid}`;
-        fs.writeFileSync(tmpPath, JSON.stringify(state));
-        fs.renameSync(tmpPath, statePath);
-      } catch {
-        // State persistence is best-effort; this invocation still reports total.
+
+      // Accept a complete final JSON object without a newline. An incomplete
+      // tail stays uncommitted and will be retried when the writer completes it.
+      const tail = buf.subarray(lineStart).toString('utf8').trim();
+      if (tail) {
+        try {
+          const metrics = extractUsageMetrics(JSON.parse(tail));
+          if (metrics && Number.isFinite(metrics.credit)) {
+            total += metrics.credit;
+            calls++;
+          }
+          processedOffset = size;
+        } catch {
+          processedOffset = offset + lineStart;
+        }
+      } else {
+        processedOffset = offset + lineStart;
       }
+    } else if (size < offset) {
+      // Defensive reset; readSessionState normally rejects this state already.
+      processedOffset = 0;
+      total = 0;
+      calls = 0;
     }
 
-    if (!state) return null;
+    const checkpointStart = Math.max(0, processedOffset - SESSION_HEAD_BYTES);
+    const checkpointLength = processedOffset - checkpointStart;
+    const checkpoint = Buffer.alloc(checkpointLength);
+    if (checkpointLength > 0) fs.readSync(fd, checkpoint, 0, checkpointLength, checkpointStart);
+    const state = {
+      version: SESSION_STATE_VERSION,
+      path: resolved,
+      identity,
+      headHash,
+      offset: processedOffset,
+      credits: total,
+      creditCallCount: calls,
+      checkpointHash: hashBuffer(checkpoint),
+      updatedAt: Date.now(),
+    };
+    if (!cached || processedOffset !== offset || size === 0) writeSessionState(statePath, state);
+
     return {
       credits: calls > 0 ? total : null,
       creditCallCount: calls,
+      offset: processedOffset,
       source: 'session',
     };
   } catch {

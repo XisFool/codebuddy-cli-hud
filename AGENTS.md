@@ -138,7 +138,7 @@ renderer 的 cache badge 优先用本轮聚合；credits 则使用整个 transcr
   绿色新增，`-` 仍为红色删除。
 - **Credits 是整个 transcript 会话的实际累计消费，不是模型倍率**：
   `getSessionUsageMetrics()` 按偏移增量聚合所有 `providerData.rawUsage.credit`，状态
-  保存在 `~/.codebuddy/codebuddy-hud-credit-state.json`。缓存损坏、transcript 截断或
+  保存在 `~/.codebuddy/codebuddy-hud-usage-state/` 下按 transcript 隔离的状态文件。缓存损坏、transcript 截断或
   轮换时自动从头重建。没有 transcript credit 时才用 payload 明示的 `cost.credits`；
   未知消费省略此段，绝不使用 `local_storage` 模型费率或伪造 `0.00x credits`。
 
@@ -173,5 +173,5 @@ renderer 的 cache badge 优先用本轮聚合；credits 则使用整个 transcr
 
 ## 风格
 
-- 提交前先跑 `node --test "tests/unit/*.test.mjs"`；251 个用例应全绿
+- 提交前先跑 `node --test "tests/unit/*.test.mjs"`；254 个用例应全绿
 - 函数 / 文件改动若偏离上述任一硬约束，必须在 PR 描述里点名并给出依据

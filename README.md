@@ -71,8 +71,8 @@ detail shown is derived from `file_path` / `path` / `notebook_path` (basename on
 
 When `transcript_path` is present in the statusLine payload, the HUD shows cumulative actual
 credits from every `providerData.rawUsage.credit` entry in that transcript. The total is
-maintained incrementally in `~/.codebuddy/codebuddy-hud-credit-state.json`, so old transcript
-bytes are not rescanned on each refresh. A damaged cache or transcript rotation is rebuilt
+maintained incrementally in `~/.codebuddy/codebuddy-hud-usage-state/`, so old transcript bytes
+are not rescanned on each refresh. A damaged cache or transcript rotation is rebuilt
 automatically. If no actual credit telemetry is available, the HUD falls back to the payload's
 explicit `cost.credits` value and otherwise omits the credit segment.
 

@@ -18,6 +18,7 @@ release_tmp/
 /codebuddy-hud-error.log
 /codebuddy-hud-cache-state.json
 /codebuddy-hud-credit-state.json
+/codebuddy-hud-usage-state/
 /settings.json
 /settings.json.bak.codebuddy-hud
 

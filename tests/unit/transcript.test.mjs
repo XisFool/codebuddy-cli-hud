@@ -7,6 +7,7 @@ import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const { getRecentToolActivity, getRecentUsageMetrics, getTurnUsageMetrics, getSessionUsageMetrics, extractUsageMetrics, MAX_TOTAL_BYTES } = require('../../runtime/transcript.js');
+const { getTranscriptUsageStatePath } = require('../../runtime/paths.js');
 
 let tmpDir;
 
@@ -511,5 +512,39 @@ describe('getSessionUsageMetrics — incremental session aggregation', () => {
     const m = getSessionUsageMetrics(p, { statePath: path.join(tmpDir, 'session-no-credit-state.json') });
     assert.equal(m.credits, null);
     assert.equal(m.creditCallCount, 0);
+  });
+
+  it('does not commit an incomplete trailing JSONL line', () => {
+    const p = writeTmp('session-partial.jsonl', call('a', 1) + '\n' + call('b', 2).slice(0, -3));
+    const state = path.join(tmpDir, 'session-partial-state.json');
+    let m = getSessionUsageMetrics(p, { statePath: state });
+    assert.equal(m.credits, 1);
+    assert.ok(m.offset < fs.statSync(p).size);
+
+    fs.appendFileSync(p, call('b', 2).slice(-3) + '\n');
+    m = getSessionUsageMetrics(p, { statePath: state });
+    assert.equal(m.credits, 3);
+    assert.equal(m.creditCallCount, 2);
+  });
+
+  it('detects an in-place transcript rewrite even when the path remains the same', () => {
+    const p = writeTmp('session-rewrite.jsonl', call('a', 1) + '\n' + call('b', 2) + '\n');
+    const state = path.join(tmpDir, 'session-rewrite-state.json');
+    assert.equal(getSessionUsageMetrics(p, { statePath: state }).credits, 3);
+
+    // Keep the file path and shape but replace its contents with a new
+    // transcript. The head/checkpoint fingerprint must invalidate the old sum.
+    fs.writeFileSync(p, call('x', 9) + '\n' + call('y', 8) + '\n');
+    const m = getSessionUsageMetrics(p, { statePath: state });
+    assert.equal(m.credits, 17);
+    assert.equal(m.creditCallCount, 2);
+  });
+
+  it('uses independent default state files for different transcript paths', () => {
+    const p1 = writeTmp('session-isolated-a.jsonl', call('a', 1) + '\n');
+    const p2 = writeTmp('session-isolated-b.jsonl', call('b', 4) + '\n');
+    assert.notEqual(getTranscriptUsageStatePath(p1), getTranscriptUsageStatePath(p2));
+    assert.equal(getSessionUsageMetrics(p1).credits, 1);
+    assert.equal(getSessionUsageMetrics(p2).credits, 4);
   });
 });
