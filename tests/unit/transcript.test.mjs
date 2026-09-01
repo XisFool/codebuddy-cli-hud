@@ -10,12 +10,17 @@ const { getRecentToolActivity, getRecentUsageMetrics, getTurnUsageMetrics, getSe
 const { getTranscriptUsageStatePath } = require('../../runtime/paths.js');
 
 let tmpDir;
+let originalCodeBuddyHome;
 
 before(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cbhud-transcript-'));
+  originalCodeBuddyHome = process.env.CODEBUDDY_HOME;
+  process.env.CODEBUDDY_HOME = path.join(tmpDir, 'codebuddy-home');
 });
 
 after(() => {
+  if (originalCodeBuddyHome === undefined) delete process.env.CODEBUDDY_HOME;
+  else process.env.CODEBUDDY_HOME = originalCodeBuddyHome;
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -257,6 +262,9 @@ describe('extractUsageMetrics — real providerData shapes', () => {
   it('rejects invalid credit telemetry', () => {
     assert.equal(extractUsageMetrics({ providerData: { rawUsage: { credit: -1 } } }), null);
     assert.equal(extractUsageMetrics({ providerData: { rawUsage: { credit: '1.25' } } }), null);
+    assert.equal(extractUsageMetrics({ providerData: { rawUsage: { credit: NaN } } }), null);
+    assert.equal(extractUsageMetrics({ providerData: { rawUsage: { credit: Infinity } } }), null);
+    assert.equal(extractUsageMetrics({ providerData: { rawUsage: { credit: new Number(2) } } }), null);
   });
 
   it('reads cached_tokens from rawUsage.prompt_tokens_details when prompt_cache_hit_tokens absent', () => {
@@ -497,6 +505,33 @@ describe('getSessionUsageMetrics — incremental session aggregation', () => {
     assert.equal(m.creditCallCount, 4);
   });
 
+  it('reads only the appended tail after a normal file growth', () => {
+    const filler = JSON.stringify({ message: 'x'.repeat(4096) }) + '\n';
+    const p = writeTmp('session-incremental-bytes.jsonl', filler.repeat(160));
+    const state = path.join(tmpDir, 'session-incremental-bytes-state.json');
+    assert.equal(getSessionUsageMetrics(p, { statePath: state }).credits, null);
+
+    fs.appendFileSync(p, call('appended', 3) + '\n');
+    const originalReadSync = fs.readSync;
+    let bytesRead = 0;
+    fs.readSync = function trackedReadSync(fd, buffer, offset, length, position) {
+      const result = originalReadSync.call(this, fd, buffer, offset, length, position);
+      bytesRead += typeof result === 'number' ? result : 0;
+      return result;
+    };
+    try {
+      const m = getSessionUsageMetrics(p, { statePath: state });
+      assert.equal(m.credits, 3);
+      assert.equal(m.creditCallCount, 1);
+    } finally {
+      fs.readSync = originalReadSync;
+    }
+
+    // The head/checkpoint validation reads at most 8KiB, then only the newly
+    // appended line. A full rescan of the 650KiB prefix would exceed this.
+    assert.ok(bytesRead < 32 * 1024, `unexpected full rescan: ${bytesRead} bytes`);
+  });
+
   it('rebuilds from scratch when state is corrupt or transcript is truncated', () => {
     const p = writeTmp('session-rebuild.jsonl', call('a', 2) + '\n');
     const state = path.join(tmpDir, 'session-rebuild-state.json');
@@ -538,6 +573,74 @@ describe('getSessionUsageMetrics — incremental session aggregation', () => {
     const m = getSessionUsageMetrics(p, { statePath: state });
     assert.equal(m.credits, 17);
     assert.equal(m.creditCallCount, 2);
+  });
+
+  it('detects a same-size rewrite in the middle of a large transcript', () => {
+    const paddedCall = (id, credit) => JSON.stringify({
+      type: 'function_call', callId: id, name: 'Bash',
+      // Keep the changed credit near the beginning while leaving the final
+      // checkpoint window unchanged. mtime/ctime identity must invalidate the
+      // cached total even though path, inode and size remain stable.
+      providerData: { rawUsage: { credit }, padding: 'x'.repeat(12000) },
+    });
+    const p = writeTmp('session-large-rewrite.jsonl', paddedCall('a', 1) + '\n' + paddedCall('b', 2) + '\n');
+    const state = path.join(tmpDir, 'session-large-rewrite-state.json');
+    assert.equal(getSessionUsageMetrics(p, { statePath: state }).credits, 3);
+
+    const replacement = Buffer.from(paddedCall('b', 9) + '\n');
+    const original = fs.readFileSync(p, 'utf8');
+    const secondStart = original.indexOf(paddedCall('b', 2));
+    assert.ok(secondStart > 4096);
+    const fd = fs.openSync(p, 'r+');
+    try {
+      fs.writeSync(fd, replacement, 0, replacement.length, secondStart);
+    } finally {
+      fs.closeSync(fd);
+    }
+    assert.equal(fs.statSync(p).size, original.length);
+    assert.equal(getSessionUsageMetrics(p, { statePath: state }).credits, 10);
+  });
+
+  it('keeps working when the usage state cannot be written', () => {
+    const p = writeTmp('session-state-readonly.jsonl', call('a', 2) + '\n');
+    // An invalid path is not writable, so persistence fails while the current
+    // invocation still returns the computed total.
+    const m = getSessionUsageMetrics(p, { statePath: path.join(tmpDir, 'bad\0state') });
+    assert.equal(m.credits, 2);
+    assert.equal(m.creditCallCount, 1);
+  });
+
+  it('scans a 20MB transcript without requiring a full-size buffer', () => {
+    const filler = JSON.stringify({ message: 'x'.repeat(8192) }) + '\n';
+    const parts = [];
+    let bytes = 0;
+    while (bytes < 20 * 1024 * 1024) {
+      parts.push(filler);
+      bytes += Buffer.byteLength(filler);
+    }
+    parts.push(call('final', 7) + '\n');
+    const p = writeTmp('session-20mb.jsonl', parts.join(''));
+    const state = path.join(tmpDir, 'session-20mb-state.json');
+    const start = process.hrtime.bigint();
+    const m = getSessionUsageMetrics(p, { statePath: state });
+    const elapsedMs = Number(process.hrtime.bigint() - start) / 1e6;
+    assert.equal(m.credits, 7);
+    assert.equal(m.creditCallCount, 1);
+    assert.ok(elapsedMs < 1500, `took ${elapsedMs}ms`);
+  });
+
+  it('handles one 20MB JSONL line without quadratic chunk copying', () => {
+    const p = writeTmp('session-20mb-single-line.jsonl', JSON.stringify({
+      providerData: { rawUsage: { credit: 8 } },
+      padding: 'x'.repeat(20 * 1024 * 1024),
+    }));
+    const state = path.join(tmpDir, 'session-20mb-single-line-state.json');
+    const start = process.hrtime.bigint();
+    const m = getSessionUsageMetrics(p, { statePath: state });
+    const elapsedMs = Number(process.hrtime.bigint() - start) / 1e6;
+    assert.equal(m.credits, 8);
+    assert.equal(m.creditCallCount, 1);
+    assert.ok(elapsedMs < 1500, `took ${elapsedMs}ms`);
   });
 
   it('uses independent default state files for different transcript paths', () => {

@@ -1,106 +1,190 @@
 # codebuddy-cli-hud
 
-A compact terminal HUD for the CodeBuddy Code statusLine. The host pipes session JSON into
-this program on stdin every ~300ms; it prints a dashboard of at most 4 lines.
+`codebuddy-cli-hud` 是 CodeBuddy Code `statusLine` 的紧凑终端 HUD。CodeBuddy 大约每 300ms
+通过 stdin 传入一份会话 JSON，本程序输出最多 4 行 ANSI 状态信息。
 
-- **Zero npm dependencies** — only Node.js built-ins.
-- **Node >= 18.**
-- Budget: the whole run must stay well under **1500ms**.
-- Always exits **0**. Any internal failure degrades silently to a shorter line, never to a
-  broken statusLine.
+- 需要 Node.js >= 18。
+- 不需要执行 `npm install`。
+- 没有第三方 npm 依赖，只使用 Node.js 内置模块。
+- 单次运行有 1500ms 预算；内部错误会静默降级，进程仍以 exit code `0` 结束。
 
-## Install
+GitHub 项目地址：[XisFool/codebuddy-cli-hud](https://github.com/XisFool/codebuddy-cli-hud)
+
+## 功能与数据口径
+
+默认 HUD 最多输出 4 行：环境与模型、Token/上下文/Cache、Diff/Credits/耗时，以及任务或最近工具活动。
+
+| 项目 | 含义 |
+| --- | --- |
+| `Token` | 当前 `context_window.current_usage` 的 `input_tokens + output_tokens`。括号内分别显示 `in` 与 `out`，不是整个会话累计。 |
+| 上下文进度 | 使用当前输入 Token、`context_window_size` 和 payload 的 `used_percentage`；不会把会话累计 Token 混入当前上下文。 |
+| `cache` | 优先从 transcript 的 `providerData` 聚合当前对话轮次的缓存命中率；无法取得 telemetry 时才回退 payload，缺字段显示 `cache --`。 |
+| `Δ +N -M` | 当前 payload 的 `cost.total_lines_added` 与 `cost.total_lines_removed`。不支持 Unicode 时使用 `[D]`。 |
+| `Credits` | **当前 `transcript_path` 所代表会话的累计实际消费**：汇总所有合法 `providerData.rawUsage.credit`。它不是模型倍率、不是单轮消费，也不是用户历史全局累计。 |
+
+`credit: 0` 是有效的零消费，会被保留。缺失、负数、`NaN`、无限值、字符串和其他非数字值不会计入。
+
+每个 transcript 都有独立状态文件，默认位于 `~/.codebuddy/codebuddy-hud-usage-state/`。后续刷新只读取新追加的 JSONL 内容；缓存损坏、文件截断、轮换或同大小覆盖都会自动重建。新会话会使用新的 transcript 状态，不会复用上一会话的累计值。
+
+如果 payload 没有 `transcript_path`，程序无法定位 transcript，因此无法读取累计 Credits；此时只会回退到 payload 明示的 `cost.credits`。若 transcript 中存在有效 credit，累计值优先于 payload 的美元估值或 credit 字段。没有可用消费数据时不会显示伪造的 `0.00x credits`。
+
+## 安装
+
+先 clone 仓库并进入目录。项目没有依赖安装步骤：
 
 ```bash
-node runtime/bin/codebuddy-hud.js --setup      # register the statusLine
-node runtime/bin/codebuddy-hud.js --status     # preview with sample data
-node runtime/bin/codebuddy-hud.js --uninstall  # remove the statusLine entry
+git clone https://github.com/XisFool/codebuddy-cli-hud.git
+cd codebuddy-cli-hud
+node runtime/bin/codebuddy-hud.js --setup
 ```
 
-`--setup` writes a `statusLine` entry into CodeBuddy's `settings.json` and backs up any
-existing one to `settings.json.bak.codebuddy-hud`.
+`--setup` 会在 CodeBuddy 的 `settings.json` 写入 `statusLine`。若原本已有 `statusLine`，首次安装会将完整 settings 备份为 `settings.json.bak.codebuddy-hud`；重复执行 `--setup` 不会覆盖这份原始备份。
 
-## Platform behaviour
+### Windows
 
-| | Windows | Linux / macOS / WSL |
-|---|---|---|
-| Registered command | `"<...>\codebuddy-hud.cmd"` | `"/path/to/node" "/path/to/codebuddy-hud.js"` |
-| Shim | `.cmd` shim generated next to the entry point | none needed |
-| Executable bit | n/a | `chmod 755` best-effort, silent on failure |
+在 PowerShell 或 `cmd.exe` 中执行：
 
-On POSIX the paths are embedded in a double-quoted shell word, so `"`, `` ` ``, `$` and `\`
-inside an install path are backslash-escaped and cannot be expanded by the shell.
+```powershell
+node runtime/bin/codebuddy-hud.js --setup
+node runtime/bin/codebuddy-hud.js --status
+node runtime/bin/codebuddy-hud.js --uninstall
+```
 
-`settings.json` lives under `~/.codebuddy` (following CodeBuddy itself); there is no XDG
-handling. Override the location with `CODEBUDDY_HOME` or `CODEBUDDY_SETTINGS_PATH`.
+Windows 上，`--setup` 会在 `runtime/bin/` 生成被 `.gitignore` 忽略的
+`codebuddy-hud.cmd` shim，并把安装时的 `process.execPath` 写入 shim。这样 GUI 启动的
+CodeBuddy 不依赖当前 shell 的 `PATH`，适用于 nvm、fnm、Volta 等 Node 管理器。切换 Node
+版本或 Node 安装路径后，重新执行 `--setup` 即可刷新 shim。该 shim 是本机生成文件，不应提交。
 
-## Unicode detection
+生成的 command 使用引号；包含空格、中文或 Unicode 的目录可用。shim 自身也使用 CRLF，并通过
+真实 `cmd.exe` 验证过在含 `&`、`^`、`(`、`)`、`%` 和 Unicode 的目录中运行。不要手工复制其他
+开发者机器生成的 `.cmd` 文件。
 
-Glyphs degrade to ASCII when the terminal cannot render Unicode. On Windows the code page is
-probed via `chcp.com`. Elsewhere the decision is, in order:
+默认设置文件为 `%USERPROFILE%\.codebuddy\settings.json`。
 
-1. `CODEBUDDY_HUD_FORCE_ASCII=1` → ASCII; `CODEBUDDY_HUD_FORCE_UNICODE=1` → Unicode.
-2. Otherwise the first non-empty of `LC_ALL` / `LC_CTYPE` / `LANG` decides — it must contain
-   `utf-8` or `utf8`. An explicit `LANG=C` therefore means ASCII.
-3. If all three are unset (typical in containers and over SSH), UTF-8 is assumed — except
-   when `TERM` is `dumb` or `linux`, which are known not to render it.
+### Linux、macOS 与 WSL
 
-| Environment | Result |
-|---|---|
-| `LANG=en_US.UTF-8` | Unicode |
-| `LANG=C` | ASCII |
-| `LC_ALL=C LANG=en_US.UTF-8` | ASCII (`LC_ALL` wins) |
-| no locale variables set | Unicode |
-| no locale variables, `TERM=dumb` or `TERM=linux` | ASCII |
-| `CODEBUDDY_HUD_FORCE_ASCII=1` | ASCII (overrides everything) |
+```sh
+node runtime/bin/codebuddy-hud.js --setup
+node runtime/bin/codebuddy-hud.js --status
+node runtime/bin/codebuddy-hud.js --uninstall
+```
 
-## Latest tool activity
+POSIX 平台的 settings command 直接使用安装时的 Node 绝对路径和
+`runtime/bin/codebuddy-hud.js`，不需要 `.cmd` shim。路径中的空格、双引号、反斜杠、`$` 和反引号会在
+双引号 shell 参数中转义。`chmod 755` 只是方便直接运行脚本的尽力操作，失败不会使安装失败。
 
-Line 4 can show the tool call currently in flight, e.g. `◐ Edit: auth.ts`.
+默认设置文件为 `$HOME/.codebuddy/settings.json`。程序可从任意工作目录运行，使用的是安装时写入的
+绝对路径。
 
-The transcript at `transcript_path` is read by **tail only** — a 16KB window is scanned
-backwards from EOF (up to a 256KB ceiling), never the whole file, because transcripts grow
-to many megabytes. Lines can be several KB, so if a window holds no tool call the scan slides
-further back rather than giving up. Measured cost is well under 1ms per invocation.
+## Settings 路径与环境变量
 
-A call is `active` (◐, cyan) until a matching result id appears, then `done` (✓, dim). The
-detail shown is derived from `file_path` / `path` / `notebook_path` (basename only) or from
-`command` / `pattern` / `query` / `url` (first few words).
+默认 CodeBuddy 根目录是 `~/.codebuddy`。可通过以下环境变量隔离安装、使用便携配置或定位调试问题：
 
-## Credits
+| 变量 | 含义 |
+| --- | --- |
+| `CODEBUDDY_HOME` | 覆盖 CodeBuddy 根目录；settings、HUD 缓存、错误日志和 usage state 均位于其下。 |
+| `CODEBUDDY_SETTINGS_PATH` | 直接覆盖 `settings.json` 路径，优先级高于 `CODEBUDDY_HOME`。 |
 
-When `transcript_path` is present in the statusLine payload, the HUD shows cumulative actual
-credits from every `providerData.rawUsage.credit` entry in that transcript. The total is
-maintained incrementally in `~/.codebuddy/codebuddy-hud-usage-state/`, so old transcript bytes
-are not rescanned on each refresh. A damaged cache or transcript rotation is rebuilt
-automatically. If no actual credit telemetry is available, the HUD falls back to the payload's
-explicit `cost.credits` value and otherwise omits the credit segment.
+PowerShell 示例：
 
-## Configuration
+```powershell
+$env:CODEBUDDY_HOME = 'D:\temp\codebuddy-home'
+node runtime/bin/codebuddy-hud.js --setup
+```
 
-Defaults ship in `runtime/codebuddy-hud.config.json`. Drop a `codebuddy-hud.config.json` in
-your project directory to override any part of it — the two are deep-merged.
+`cmd.exe` 示例：
+
+```bat
+set CODEBUDDY_SETTINGS_PATH=D:\temp\codebuddy-settings.json
+node runtime\bin\codebuddy-hud.js --setup
+```
+
+Bash、zsh 或 WSL 示例：
+
+```sh
+export CODEBUDDY_HOME="/tmp/codebuddy-home"
+node runtime/bin/codebuddy-hud.js --setup
+```
+
+使用临时目录测试安装、卸载或 CI 时，应同时隔离 `CODEBUDDY_HOME` 和
+`CODEBUDDY_SETTINGS_PATH`，避免触碰真实用户配置。
+
+## 命令
+
+```bash
+node runtime/bin/codebuddy-hud.js --setup
+node runtime/bin/codebuddy-hud.js --status
+node runtime/bin/codebuddy-hud.js --uninstall
+```
+
+- `--setup`：注册 HUD，并在 Windows 创建或刷新本机 shim。
+- `--status`：使用示例 payload 预览 HUD。
+- `--uninstall`：有备份时恢复首次安装前的 settings；没有备份时只移除属于
+  `codebuddy-hud` 的 `statusLine`。同时清理 HUD 的本地缓存与 transcript usage state。
+
+所有命令异常都以 exit code `0` 静默降级；目录只读、权限不足、文件锁或状态文件写入失败不会让
+statusLine 崩溃。
+
+## 配置
+
+默认配置是 `runtime/codebuddy-hud.config.json`。可在项目工作目录放置
+`codebuddy-hud.config.json` 覆盖其中一部分，配置会深度合并：
 
 ```json
 {
   "display": {
     "showToolActivity": true,
-    "toolActivityTailBytes": 16384
+    "toolActivityTailBytes": 16384,
+    "unicode": "auto"
   }
 }
 ```
 
-- `showToolActivity` — set `false` to hide the tool segment.
-- `toolActivityTailBytes` — size of the tail window per scan step.
+输出结构本身最多只有 4 行；即使 `display.maxLines` 配成很大，也不会生成额外 HUD 行。
 
-All external strings pass through `sanitizeTerminalText()`, so a hostile transcript cannot
-inject ANSI/OSC escape sequences into your terminal.
+Unicode 判定可用 `CODEBUDDY_HUD_FORCE_ASCII=1` 或
+`CODEBUDDY_HUD_FORCE_UNICODE=1` 覆盖。Windows 会缓存 `chcp.com` 的探测结果；POSIX 会结合
+`LC_ALL`、`LC_CTYPE`、`LANG` 和 `TERM` 判断。`LANG=C` 或 `TERM=dumb` 会降级为 ASCII。
 
-## Development
+## 常见问题
+
+**执行后没有 HUD 或 Node 路径已经变更**：Windows 重新执行 `--setup` 以刷新
+`codebuddy-hud.cmd`。Linux/macOS/WSL 请确认 settings command 中的 Node 与仓库绝对路径仍存在。
+
+**需要查看已注册内容**：执行 `node runtime/bin/codebuddy-hud.js --status`，并检查默认或
+`CODEBUDDY_SETTINGS_PATH` 指向的 `settings.json`。
+
+**Credits 不显示或看起来不是总历史**：Credits 只针对当前 `transcript_path`。新 transcript 是新会话；
+没有 `transcript_path` 时无法读取会话累计值。检查 provider 是否写入数值型
+`providerData.rawUsage.credit`。
+
+**Cache 显示 `cache --`**：provider 没有提供可计算的缓存字段时这是正常降级，不会伪造 0%。
+
+**Unicode 字形异常**：设置 `CODEBUDDY_HUD_FORCE_ASCII=1`，或删除 CodeBuddy 根目录下的
+`codebuddy-hud-cache-state.json` 后重新探测。
+
+**只读 HOME、CODEBUDDY_HOME 或 settings 目录**：HUD 仍应静默退出；安装和持久化状态会跳过无法写入
+的位置。为实际安装设置一个可写的 `CODEBUDDY_HOME` 或 `CODEBUDDY_SETTINGS_PATH`。
+
+## 开发与测试
 
 ```bash
-npm test     # unit tests (node --test)
-npm run verify  # end-to-end: fixtures through the real entry point
+node --test "tests/unit/*.test.mjs"
+npm run verify
+node runtime/bin/codebuddy-hud.js --status
+git diff --check
 ```
 
-Both are cross-platform — the test glob is expanded by Node itself, not by the shell.
+`npm run verify` 只调用仓库脚本，不会安装依赖。测试覆盖 stdin 垃圾数据和过大输入、EPIPE、缓存和
+transcript 增量扫描、20MB transcript、安装备份/恢复、Windows `.cmd`、ASCII/Unicode 与终端注入清理。
+
+## 安全边界与限制
+
+所有可能进入终端的外部字符串都会经过 `sanitizeTerminalText()`：ANSI CSI、OSC、OSC 8 超链接、C1
+控制字符、bidi/RTL 控制字符和普通控制字符都会被移除，文本也会被长度限制。项目配置的 effort 值采用
+白名单；深层配置和 `__proto__` 合并受到防护。
+
+HUD 不发送网络请求，也不读取 transcript 之外的会话内容。工具活动只从 transcript 尾部滑窗读取，最多
+256KB；单条特别巨大的 JSONL 条目可能让较旧的工具活动或当前轮次 cache telemetry 不可见，此时会优雅
+回退。首次建立或损坏的 Credits state 会扫描对应 transcript，后续刷新只读取追加内容；state 写入失败只会
+失去缓存，不会中断 HUD。

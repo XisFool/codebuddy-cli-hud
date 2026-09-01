@@ -1,9 +1,14 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execSync } from 'node:child_process';
 
 const require = createRequire(import.meta.url);
-const { buildStatusLineCommand, buildCmdShimContent } = require('../../runtime/statusline-installer.js');
+const { buildStatusLineCommand, buildCmdShimContent, setup } = require('../../runtime/statusline-installer.js');
+const { uninstall } = require('../../runtime/uninstall.js');
 
 // POSIX fixtures use forward slashes; win32 fixtures use C:\... style.
 const POSIX_NODE = '/usr/bin/node';
@@ -27,6 +32,13 @@ describe('buildStatusLineCommand', () => {
     const command = buildStatusLineCommand('win32', hudBin, 'C:\\node.exe');
 
     assert.equal(command, '"C:\\my $weird`dir\\codebuddy-hud.cmd"');
+  });
+
+  test('win32 preserves cmd metacharacters inside the quoted shim path', () => {
+    const hudBin = 'C:\\dir&name^part(1)%pct\\codebuddy-hud.js';
+    const command = buildStatusLineCommand('win32', hudBin, 'C:\\node.exe');
+
+    assert.equal(command, '"C:\\dir&name^part(1)%pct\\codebuddy-hud.cmd"');
   });
 
   test('linux -> two double-quoted words separated by a space', () => {
@@ -135,4 +147,98 @@ describe('buildCmdShimContent', () => {
     assert.ok(shim.includes('"D:\\pct%%var\\node.exe"'), 'percent must be doubled in the shim');
     assert.ok(!shim.includes('pct%var'), 'single % would be eaten or expanded by cmd.exe');
   });
+});
+
+test('setup preserves the first backup, refreshes the Windows shim, and uninstall restores it', () => {
+  const originalSettingsPath = process.env.CODEBUDDY_SETTINGS_PATH;
+  const originalCodeBuddyHome = process.env.CODEBUDDY_HOME;
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'codebuddy-hud-installer-'));
+  const settingsPath = path.join(tempRoot, 'nested', 'settings.json');
+  const runtimeDir = path.join(tempRoot, 'isolated runtime');
+  const hudBin = path.join(runtimeDir, 'bin', 'codebuddy-hud.js');
+  const originalSettings = {
+    theme: 'custom',
+    statusLine: { type: 'command', command: 'custom-statusline', padding: 2 },
+    nested: { enabled: true },
+  };
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  fs.mkdirSync(path.dirname(hudBin), { recursive: true });
+  fs.writeFileSync(hudBin, '#!/usr/bin/env node\n');
+  fs.writeFileSync(settingsPath, JSON.stringify(originalSettings, null, 2));
+  process.env.CODEBUDDY_SETTINGS_PATH = settingsPath;
+  process.env.CODEBUDDY_HOME = path.join(tempRoot, 'home');
+
+  const backupPath = settingsPath + '.bak.codebuddy-hud';
+  const cmdShim = hudBin.replace(/\.js$/, '.cmd');
+  try {
+    setup({ runtimeDir, platform: 'win32', nodeExe: 'C:\\old node\\node.exe' });
+    const firstBackup = fs.readFileSync(backupPath, 'utf8');
+    assert.deepEqual(JSON.parse(firstBackup), originalSettings);
+    assert.match(fs.readFileSync(cmdShim, 'utf8'), /C:\\old node\\node\.exe/);
+
+    setup({ runtimeDir, platform: 'win32', nodeExe: 'D:\\new node\\node.exe' });
+    assert.equal(fs.readFileSync(backupPath, 'utf8'), firstBackup, 'second setup must not overwrite the original backup');
+    assert.match(fs.readFileSync(cmdShim, 'utf8'), /D:\\new node\\node\.exe/, 're-setup must refresh a changed Node path');
+    const installed = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    assert.equal(installed.statusLine.type, 'command');
+    assert.equal(installed.statusLine.command, `"${cmdShim}"`);
+
+    uninstall({ runtimeDir, platform: 'win32' });
+    assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, 'utf8')), originalSettings);
+    assert.equal(fs.existsSync(backupPath), false);
+    assert.equal(fs.existsSync(cmdShim), false, 'uninstall should remove the generated Windows shim');
+  } finally {
+    if (originalSettingsPath === undefined) delete process.env.CODEBUDDY_SETTINGS_PATH;
+    else process.env.CODEBUDDY_SETTINGS_PATH = originalSettingsPath;
+    if (originalCodeBuddyHome === undefined) delete process.env.CODEBUDDY_HOME;
+    else process.env.CODEBUDDY_HOME = originalCodeBuddyHome;
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('POSIX setup does not create or remove a Windows shim', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'codebuddy-hud-posix-'));
+  const originalCodeBuddyHome = process.env.CODEBUDDY_HOME;
+  const settingsPath = path.join(tempRoot, 'settings.json');
+  const runtimeDir = path.join(tempRoot, 'runtime');
+  const hudBin = path.join(runtimeDir, 'bin', 'codebuddy-hud.js');
+  const cmdShim = hudBin.replace(/\.js$/, '.cmd');
+  fs.mkdirSync(path.dirname(hudBin), { recursive: true });
+  fs.writeFileSync(hudBin, '#!/usr/bin/env node\n');
+  fs.writeFileSync(cmdShim, 'pre-existing Windows shim');
+  process.env.CODEBUDDY_HOME = path.join(tempRoot, 'home');
+  try {
+    setup({ settingsPath, runtimeDir, platform: 'linux', nodeExe: '/usr/bin/node' });
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    assert.equal(settings.statusLine.command, buildStatusLineCommand('linux', hudBin, '/usr/bin/node'));
+    assert.equal(fs.readFileSync(cmdShim, 'utf8'), 'pre-existing Windows shim');
+
+    uninstall({ settingsPath, runtimeDir, platform: 'linux' });
+    assert.equal(fs.readFileSync(cmdShim, 'utf8'), 'pre-existing Windows shim');
+  } finally {
+    if (originalCodeBuddyHome === undefined) delete process.env.CODEBUDDY_HOME;
+    else process.env.CODEBUDDY_HOME = originalCodeBuddyHome;
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('generated Windows shim runs through cmd.exe from a special-character path', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'codebuddy-hud-&-'));
+  const shimPath = path.join(tempRoot, 'codebuddy-hud.cmd');
+  const hudPath = path.join(tempRoot, 'codebuddy-hud.js');
+  try {
+    fs.writeFileSync(hudPath, "process.stdout.write(process.argv.slice(2).join('|'));\n");
+    fs.writeFileSync(shimPath, buildCmdShimContent(process.execPath));
+    // Execute from the special-character directory so the batch expansion of
+    // %~dp0 has to carry its path through cmd.exe safely.
+    const stdout = execSync(
+      'codebuddy-hud.cmd "two words"',
+      { cwd: tempRoot, shell: process.env.ComSpec || 'cmd.exe', encoding: 'utf8', windowsHide: true },
+    );
+    assert.equal(stdout, 'two words');
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });

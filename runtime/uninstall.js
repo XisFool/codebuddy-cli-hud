@@ -3,15 +3,18 @@
 const fs = require('fs');
 const path = require('path');
 const { getSettingsPath, getCacheStatePath, getCreditStatePath, getTranscriptUsageStateDir } = require('./paths');
+const { sanitizeTerminalText } = require('./sanitize');
 
-function uninstall() {
-  const settingsPath = getSettingsPath();
+function uninstall(options) {
+  const opts = options || {};
+  const settingsPath = opts.settingsPath || getSettingsPath();
   const backupPath = settingsPath + '.bak.codebuddy-hud';
   const cachePath = getCacheStatePath();
   const creditPath = getCreditStatePath();
   const usageStateDir = getTranscriptUsageStateDir();
-  const hudBin = path.join(__dirname, 'bin', 'codebuddy-hud.js');
+  const hudBin = opts.hudBin || path.join(opts.runtimeDir || __dirname, 'bin', 'codebuddy-hud.js');
   const cmdShim = hudBin.replace(/\.js$/, '.cmd');
+  const platform = opts.platform || process.platform;
 
   let cleaned = [];
 
@@ -21,10 +24,10 @@ function uninstall() {
       const backup = fs.readFileSync(backupPath, 'utf8');
       fs.writeFileSync(settingsPath, backup);
       fs.unlinkSync(backupPath);
-      cleaned.push(`Restored settings from backup: ${backupPath}`);
+      cleaned.push(`Restored settings from backup: ${sanitizeTerminalText(backupPath, 512)}`);
     } else {
       const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      if (settings.statusLine && settings.statusLine.command && settings.statusLine.command.includes('codebuddy-hud')) {
+      if (settings.statusLine && typeof settings.statusLine.command === 'string' && settings.statusLine.command.includes('codebuddy-hud')) {
         delete settings.statusLine;
         fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
         cleaned.push('Removed statusLine from settings.json');
@@ -34,21 +37,24 @@ function uninstall() {
     cleaned.push('Warning: could not modify settings.json');
   }
 
-  // Remove .cmd shim
-  try {
-    if (fs.existsSync(cmdShim)) {
-      fs.unlinkSync(cmdShim);
-      cleaned.push(`Removed Windows shim: ${cmdShim}`);
+  // A POSIX install never creates a .cmd shim. Avoid deleting an unrelated
+  // Windows artifact merely because a checkout is shared through WSL.
+  if (platform === 'win32') {
+    try {
+      if (fs.existsSync(cmdShim)) {
+        fs.unlinkSync(cmdShim);
+        cleaned.push(`Removed Windows shim: ${sanitizeTerminalText(cmdShim, 512)}`);
+      }
+    } catch {
+      cleaned.push('Warning: could not remove .cmd shim');
     }
-  } catch {
-    cleaned.push('Warning: could not remove .cmd shim');
   }
 
   // Remove cache state
   try {
     if (fs.existsSync(cachePath)) {
       fs.unlinkSync(cachePath);
-      cleaned.push(`Removed cache state: ${cachePath}`);
+      cleaned.push(`Removed cache state: ${sanitizeTerminalText(cachePath, 512)}`);
     }
   } catch {
     // ignore
@@ -57,7 +63,7 @@ function uninstall() {
   try {
     if (fs.existsSync(usageStateDir)) {
       fs.rmSync(usageStateDir, { recursive: true, force: true });
-      cleaned.push(`Removed transcript usage state: ${usageStateDir}`);
+      cleaned.push(`Removed transcript usage state: ${sanitizeTerminalText(usageStateDir, 512)}`);
     }
   } catch {
     // ignore
@@ -66,7 +72,7 @@ function uninstall() {
   try {
     if (fs.existsSync(creditPath)) {
       fs.unlinkSync(creditPath);
-      cleaned.push(`Removed credit state: ${creditPath}`);
+      cleaned.push(`Removed credit state: ${sanitizeTerminalText(creditPath, 512)}`);
     }
   } catch {
     // ignore

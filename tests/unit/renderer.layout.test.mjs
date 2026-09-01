@@ -8,6 +8,21 @@ import nodePath from 'node:path';
 const require = createRequire(import.meta.url);
 const { renderHUD } = require('../../runtime/renderer.js');
 
+let originalCodeBuddyHome;
+let testCodeBuddyHome;
+
+before(() => {
+  originalCodeBuddyHome = process.env.CODEBUDDY_HOME;
+  testCodeBuddyHome = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'cbhud-renderer-home-'));
+  process.env.CODEBUDDY_HOME = testCodeBuddyHome;
+});
+
+after(() => {
+  if (originalCodeBuddyHome === undefined) delete process.env.CODEBUDDY_HOME;
+  else process.env.CODEBUDDY_HOME = originalCodeBuddyHome;
+  fs.rmSync(testCodeBuddyHome, { recursive: true, force: true });
+});
+
 const fullPayload = {
   model: { id: 'gpt-5.5', display_name: 'GPT-5.5' },
   permission_mode: 'default',
@@ -108,6 +123,11 @@ describe('renderHUD', () => {
     const config = { ...defaultConfig, display: { ...defaultConfig.display, maxLines: 2 } };
     const output = renderHUD(fullPayload, config);
     assert.equal(output.split('\n').length, 2);
+  });
+
+  it('never exceeds four lines even when untrusted config requests more', () => {
+    const config = { ...defaultConfig, display: { ...defaultConfig.display, maxLines: 9999 } };
+    assert.ok(renderHUD(fullPayload, config).split('\n').length <= 4);
   });
 
   it('line 2 contains cache hit rate when cacheRead > 0', () => {
@@ -262,5 +282,21 @@ describe('effort label injection defence (hard constraint 5)', () => {
     assert.ok(!/\x1b\[2J/.test(output), 'clear-screen CSI leaked');
     assert.ok(!/\x1b\]8;;http/.test(output), 'OSC-8 hyperlink leaked');
     assert.ok(!output.includes('\x07'), 'BEL leaked');
+  });
+
+  it('sanitizes model, permission, version, and agent fields from the payload', () => {
+    const payload = {
+      model: { display_name: 'model\x1b]8;;https://evil.invalid\x07name\u202e', id: 'ignored' },
+      cwd: os.tmpdir(),
+      permission_mode: 'perm\x9b2J\u2066',
+      version: 'v\x1b[2J\u200f',
+      agents: [{ id: 'a', name: 'agent\x1b]0;title\x07\u202e', status: 'active' }],
+      context_window: { context_window_size: 1000000, used_percentage: 1, current_usage: { input_tokens: 1, output_tokens: 1 } },
+    };
+    const output = renderHUD(payload, { ...config, display: { ...config.display, showVersion: true } });
+    assert.ok(!output.includes('\x1b]8;;https://evil.invalid'));
+    assert.ok(!output.includes('\x1b]0;title'));
+    assert.ok(!output.includes('\x1b[2J'));
+    assert.ok(!/[\x80-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(output));
   });
 });

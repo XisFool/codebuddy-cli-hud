@@ -57,7 +57,7 @@ describe('supportsUnicode state-file cache (win32 probe)', () => {
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
-  test('persists the probe result to the state file', () => {
+  test('persists the probe result to the state file', { skip: process.platform !== 'win32' }, () => {
     const result = supportsUnicode();
     assert.equal(typeof result, 'boolean');
     const cachePath = nodePath.join(tmpHome, 'codebuddy-hud-cache-state.json');

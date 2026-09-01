@@ -7,7 +7,10 @@ const { loadConfig } = require('../config');
 const { renderHUD } = require('../renderer');
 const { getErrorLogPath } = require('../paths');
 
-const TIMEOUT_MS = 1500;
+// Leave headroom for Node startup and the final stdout flush. Waiting the full
+// 1500ms for a host that never closes stdin would violate the end-to-end time
+// budget before rendering even begins.
+const TIMEOUT_MS = 1000;
 const LOG_MAX_BYTES = 1024 * 1024;
 
 // A stdout pipe that the host closed early (killed statusLine, `head -c 1`, …)
@@ -112,6 +115,7 @@ if (args.includes('--setup')) {
   timer.unref();
 
   process.stdin.on('data', (chunk) => {
+    if (handled) return;
     totalStdinSize += chunk.length;
     if (totalStdinSize > MAX_STDIN_SIZE) {
       handled = true;

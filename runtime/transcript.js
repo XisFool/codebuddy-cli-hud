@@ -344,8 +344,10 @@ function getTurnUsageMetrics(transcriptPath, opts) {
   };
 }
 
-const SESSION_STATE_VERSION = 1;
+const SESSION_STATE_VERSION = 5;
 const SESSION_HEAD_BYTES = 4096;
+const SESSION_READ_CHUNK_BYTES = 64 * 1024;
+const SMALL_SESSION_VERIFY_BYTES = 256 * 1024;
 
 function statIdentity(stat) {
   return {
@@ -353,6 +355,13 @@ function statIdentity(stat) {
     ino: String(stat.ino),
     birthtimeMs: Number.isFinite(stat.birthtimeMs) ? stat.birthtimeMs : 0,
   };
+}
+
+function getStatTimestampNs(stat, name) {
+  const nanoseconds = stat && stat[`${name}Ns`];
+  if (typeof nanoseconds === 'bigint') return nanoseconds.toString();
+  const milliseconds = stat && stat[`${name}Ms`];
+  return Number.isFinite(milliseconds) ? String(Math.round(milliseconds * 1000000)) : '0';
 }
 
 function hashBuffer(buffer) {
@@ -367,6 +376,26 @@ function readHeadHash(fd, size) {
   return hashBuffer(buffer);
 }
 
+// Some network and mounted filesystems expose coarse or delayed mtime/ctime
+// updates. For small transcripts, an inexpensive whole-file hash closes that
+// gap and reliably catches a same-size in-place rewrite. Large transcripts
+// retain the metadata/checkpoint incremental path so each HUD refresh never
+// turns into a full multi-megabyte read.
+function readSmallFileHash(fd, size) {
+  if (size > SMALL_SESSION_VERIFY_BYTES) return null;
+  const hash = crypto.createHash('sha256');
+  const buffer = Buffer.alloc(Math.min(SESSION_READ_CHUNK_BYTES, Math.max(1, size)));
+  let position = 0;
+  while (position < size) {
+    const length = Math.min(buffer.length, size - position);
+    const bytesRead = fs.readSync(fd, buffer, 0, length, position);
+    if (!bytesRead) break;
+    hash.update(buffer.subarray(0, bytesRead));
+    position += bytesRead;
+  }
+  return position === size ? hash.digest('hex') : null;
+}
+
 function readSessionState(statePath, resolved, identity, size, headHash, fd) {
   try {
     const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
@@ -375,6 +404,9 @@ function readSessionState(statePath, resolved, identity, size, headHash, fd) {
         || state.identity.ino !== identity.ino
         || state.identity.birthtimeMs !== identity.birthtimeMs) return null;
     if (state.headHash !== headHash) return null;
+    if (!Number.isSafeInteger(state.sourceSize) || state.sourceSize < 0) return null;
+    if (typeof state.sourceMtimeNs !== 'string' || typeof state.sourceCtimeNs !== 'string') return null;
+    if (state.sourceContentHash !== null && typeof state.sourceContentHash !== 'string') return null;
     if (!Number.isSafeInteger(state.offset) || state.offset < 0 || state.offset > size) return null;
     if (!Number.isFinite(state.credits) || state.credits < 0) return null;
     if (!Number.isSafeInteger(state.creditCallCount) || state.creditCallCount < 0) return null;
@@ -432,53 +464,103 @@ function getSessionUsageMetrics(transcriptPath, opts) {
   try {
     fd = fs.openSync(resolved, 'r');
     const stat = fs.fstatSync(fd);
+    const highResolutionStat = fs.fstatSync(fd, { bigint: true });
     const size = stat.size;
     const identity = statIdentity(stat);
     const headHash = readHeadHash(fd, size);
-    const cached = readSessionState(statePath, resolved, identity, size, headHash, fd);
+    const smallFileHash = readSmallFileHash(fd, size);
+    let cached = readSessionState(statePath, resolved, identity, size, headHash, fd);
+
+    // A normal append changes mtime/ctime, so timestamps cannot be part of
+    // the immutable file identity. They are instead used when the byte length
+    // is unchanged: that combination is an in-place rewrite and must rebuild
+    // the total even if the changed bytes are outside our head/checkpoint
+    // hashes. A shorter file likewise indicates truncation/rotation.
+    if (cached && (size < cached.sourceSize || (size === cached.sourceSize
+        && (getStatTimestampNs(highResolutionStat, 'mtime') !== cached.sourceMtimeNs
+          || getStatTimestampNs(highResolutionStat, 'ctime') !== cached.sourceCtimeNs)))) {
+      cached = null;
+    }
+    if (cached && size === cached.sourceSize && smallFileHash !== null
+        && smallFileHash !== cached.sourceContentHash) {
+      cached = null;
+    }
 
     const offset = cached ? cached.offset : 0;
     let total = cached ? cached.credits : 0;
     let calls = cached ? cached.creditCallCount : 0;
     let processedOffset = offset;
     if (size > offset) {
-      const buf = Buffer.alloc(size - offset);
-      fs.readSync(fd, buf, 0, buf.length, offset);
-      let lineStart = 0;
-      let newline = buf.indexOf(0x0a, lineStart);
-      while (newline !== -1) {
-        const line = buf.subarray(lineStart, newline).toString('utf8').trim();
-        if (line) {
-          try {
-            const metrics = extractUsageMetrics(JSON.parse(line));
-            if (metrics && Number.isFinite(metrics.credit)) {
-              total += metrics.credit;
-              calls++;
-            }
-          } catch {
-            // Ignore malformed transcript lines; later valid lines still count.
-          }
-        }
-        lineStart = newline + 1;
-        newline = buf.indexOf(0x0a, lineStart);
-      }
+      // Read appended data in bounded chunks. A transcript can be tens or
+      // hundreds of megabytes; allocating size-offset here would turn every
+      // cache miss/rotation into an avoidable memory spike.
+      let cursor = offset;
+      let pendingChunks = [];
+      let pendingLength = 0;
+      let pendingStart = offset;
 
-      // Accept a complete final JSON object without a newline. An incomplete
-      // tail stays uncommitted and will be retried when the writer completes it.
-      const tail = buf.subarray(lineStart).toString('utf8').trim();
-      if (tail) {
+      const countCreditLine = (buffer) => {
+        const line = buffer.toString('utf8').trim();
+        if (!line) return true;
         try {
-          const metrics = extractUsageMetrics(JSON.parse(tail));
+          const metrics = extractUsageMetrics(JSON.parse(line));
           if (metrics && Number.isFinite(metrics.credit)) {
             total += metrics.credit;
             calls++;
           }
-          processedOffset = size;
+          return true;
         } catch {
-          processedOffset = offset + lineStart;
+          // Ignore malformed transcript lines; later valid lines still count.
+          return false;
+        }
+      };
+
+      while (cursor < size) {
+        const chunkStart = cursor;
+        const length = Math.min(SESSION_READ_CHUNK_BYTES, size - cursor);
+        const chunk = Buffer.alloc(length);
+        const bytesRead = fs.readSync(fd, chunk, 0, length, cursor);
+        if (!bytesRead) break;
+        cursor += bytesRead;
+
+        const current = bytesRead === chunk.length ? chunk : chunk.subarray(0, bytesRead);
+        let lineStart = 0;
+        let newline = current.indexOf(0x0a, lineStart);
+        while (newline !== -1) {
+          const part = current.subarray(lineStart, newline);
+          if (pendingLength > 0) {
+            pendingChunks.push(part);
+            pendingLength += part.length;
+            countCreditLine(Buffer.concat(pendingChunks, pendingLength));
+            pendingChunks = [];
+            pendingLength = 0;
+          } else {
+            countCreditLine(part);
+          }
+          lineStart = newline + 1;
+          processedOffset = chunkStart + lineStart;
+          newline = current.indexOf(0x0a, lineStart);
+        }
+
+        const tail = current.subarray(lineStart);
+        if (tail.length > 0) {
+          if (pendingLength === 0) pendingStart = chunkStart + lineStart;
+          pendingChunks.push(tail);
+          pendingLength += tail.length;
+        }
+      }
+
+      // Accept a complete final JSON object without a newline. An incomplete
+      // tail stays uncommitted and will be retried when the writer completes it.
+      if (pendingLength > 0) {
+        const tail = Buffer.concat(pendingChunks, pendingLength);
+        if (countCreditLine(tail)) {
+          processedOffset = size;
+        } else {
+          processedOffset = pendingStart;
         }
       } else {
-        processedOffset = offset + lineStart;
+        processedOffset = size;
       }
     } else if (size < offset) {
       // Defensive reset; readSessionState normally rejects this state already.
@@ -500,6 +582,10 @@ function getSessionUsageMetrics(transcriptPath, opts) {
       credits: total,
       creditCallCount: calls,
       checkpointHash: hashBuffer(checkpoint),
+      sourceSize: size,
+      sourceMtimeNs: getStatTimestampNs(highResolutionStat, 'mtime'),
+      sourceCtimeNs: getStatTimestampNs(highResolutionStat, 'ctime'),
+      sourceContentHash: smallFileHash,
       updatedAt: Date.now(),
     };
     if (!cached || processedOffset !== offset || size === 0) writeSessionState(statePath, state);

@@ -54,4 +54,16 @@ describe('sanitizeTerminalText', () => {
   it('still passes legitimate non-ASCII text through', () => {
     assert.equal(sanitizeTerminalText('分支/中文/naïve'), '分支/中文/naïve');
   });
+
+  it('leaves no executable escape prefix after truncation or malformed sequences', () => {
+    const value = 'ok\x1b[31\x1b]8;;https://example.invalid\x1b\\link\x9b2J\u202eevil';
+    const clean = sanitizeTerminalText(value);
+    assert.ok(!clean.includes('\x1b'));
+    assert.ok(!clean.includes('\x9b'));
+    assert.ok(!/[\u202a-\u202e\u2066-\u2069]/.test(clean));
+  });
+
+  it('bounds an untrusted oversized string', () => {
+    assert.equal(sanitizeTerminalText('x'.repeat(10000), 17).length, 17);
+  });
 });

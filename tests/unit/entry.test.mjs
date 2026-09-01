@@ -2,29 +2,39 @@
 // stderr. The EPIPE case is the load-bearing one — see the handler comment in
 // runtime/bin/codebuddy-hud.js (the natural-drain exit rework unmasked an
 // unhandled stdout 'error' that used to be hidden by process.exit()).
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const BIN = fileURLToPath(new URL('../../runtime/bin/codebuddy-hud.js', import.meta.url));
+const TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'cbhud-entry-home-'));
+const TEST_ENV = { ...process.env, CODEBUDDY_HOME: TEST_HOME };
 const payload = JSON.stringify({
   model: { display_name: 'Hy4', id: 'hy4' },
   cwd: 'D:/code_sum/Github/codebuddy-cli-hud',
   context_window: { context_window_size: 1000000, used_percentage: 18, current_usage: { input_tokens: 170219, output_tokens: 4600 } },
 });
 
-function run({ destroyStdoutEarly = false, input = null } = {}) {
+function run({ destroyStdoutEarly = false, input = null, keepStdinOpen = false, args = [], env = TEST_ENV, bin = BIN } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [BIN], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const started = Date.now();
+    const child = spawn(process.execPath, [bin, ...args], { stdio: ['pipe', 'pipe', 'pipe'], env });
     let out = '', err = '';
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { err += d; });
     child.stdin.on('error', () => {});
     if (destroyStdoutEarly) child.stdout.destroy(); // race the child's first write
-    if (input !== null) { child.stdin.write(input); child.stdin.end(); }
-    child.on('close', (code) => resolve({ code, out, err }));
+    if (input !== null) {
+      child.stdin.write(input);
+      if (!keepStdinOpen) child.stdin.end();
+    } else if (!keepStdinOpen) {
+      child.stdin.end();
+    }
+    child.on('close', (code) => resolve({ code, out, err, elapsed: Date.now() - started }));
   });
 }
 
@@ -48,8 +58,47 @@ test('garbage stdin degrades silently to exit 0', async () => {
   assert.equal(r.err, '');
 });
 
+test('empty stdin and oversized stdin exit 0 without output', async () => {
+  const empty = await run();
+  assert.equal(empty.code, 0);
+  assert.equal(empty.out, '');
+  assert.equal(empty.err, '');
+
+  const oversized = await run({ input: 'x'.repeat(1024 * 1024 + 1) });
+  assert.equal(oversized.code, 0);
+  assert.equal(oversized.out, '');
+  assert.equal(oversized.err, '');
+});
+
+test('an open stdin is released well before the 1500ms process budget', async () => {
+  const r = await run({ keepStdinOpen: true });
+  assert.equal(r.code, 0);
+  assert.ok(r.elapsed < 1450, `open stdin took ${r.elapsed}ms`);
+  assert.equal(r.err, '');
+});
+
+test('setup and uninstall failures still exit 0 without a stack trace', async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cbhud-entry-'));
+  const blocker = path.join(tempRoot, 'not-a-directory');
+  const copiedRuntime = path.join(tempRoot, 'runtime');
+  const copiedBin = path.join(copiedRuntime, 'bin', 'codebuddy-hud.js');
+  fs.writeFileSync(blocker, 'x');
+  fs.cpSync(path.dirname(path.dirname(BIN)), copiedRuntime, { recursive: true });
+  const badSettingsPath = path.join(blocker, 'settings.json');
+  const env = { ...process.env, CODEBUDDY_HOME: tempRoot, CODEBUDDY_SETTINGS_PATH: badSettingsPath };
+  try {
+    for (const arg of ['--setup', '--uninstall']) {
+      const r = await run({ args: [arg], env, bin: copiedBin });
+      assert.equal(r.code, 0, `${arg}: ${r.err}`);
+      assert.ok(!/\n\s*at \S+ \(/.test(r.err), `${arg} leaked a stack: ${r.err}`);
+    }
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('--status renders and exits 0', async () => {
-  const child = spawn(process.execPath, [BIN, '--status'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [BIN, '--status'], { stdio: ['ignore', 'pipe', 'pipe'], env: TEST_ENV });
   let out = '', err = '';
   child.stdout.on('data', (d) => { out += d; });
   child.stderr.on('data', (d) => { err += d; });
@@ -59,4 +108,8 @@ test('--status renders and exits 0', async () => {
     assert.equal(err, '');
     resolve();
   }));
+});
+
+after(() => {
+  fs.rmSync(TEST_HOME, { recursive: true, force: true });
 });
