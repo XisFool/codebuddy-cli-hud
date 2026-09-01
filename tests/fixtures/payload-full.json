@@ -1,0 +1,47 @@
+{
+  "hook_event_name": "Status",
+  "session_id": "fixture-session-full",
+  "transcript_path": "/tmp/transcript.jsonl",
+  "cwd": "/tmp/my-project",
+  "permission_mode": "default",
+  "model": {
+    "id": "gpt-5.5",
+    "display_name": "GPT-5.5"
+  },
+  "workspace": {
+    "current_dir": "/tmp/my-project",
+    "project_dir": "/tmp/my-project",
+    "added_dirs": []
+  },
+  "version": "2.95.1",
+  "output_style": { "name": "default" },
+  "cost": {
+    "total_cost_usd": 0.5,
+    "total_duration_ms": 769524,
+    "total_api_duration_ms": 600596,
+    "total_lines_added": 168,
+    "total_lines_removed": 1
+  },
+  "context_window": {
+    "total_input_tokens": 715867,
+    "total_output_tokens": 22905,
+    "context_window_size": 1000000,
+    "used_percentage": 9.17,
+    "current_usage": {
+      "input_tokens": 91000,
+      "output_tokens": 700,
+      "cache_read_input_tokens": 5800000,
+      "cache_creation_input_tokens": 0
+    }
+  },
+  "exceeds_200k_tokens": false,
+  "agents": [
+    { "id": "agent-1", "name": "explorer", "status": "active" },
+    { "id": "agent-2", "name": "coder", "status": "running" }
+  ],
+  "tasks": {
+    "total": 8,
+    "completed": 5,
+    "pending": 3
+  }
+}

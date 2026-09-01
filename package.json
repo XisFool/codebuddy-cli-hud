@@ -1,0 +1,15 @@
+{
+  "name": "codebuddy-cli-hud",
+  "version": "0.1.0",
+  "description": "A compact terminal HUD for CodeBuddy Code statusLine with subagent/task visualization and diff stats.",
+  "main": "runtime/bin/codebuddy-hud.js",
+  "scripts": {
+    "test": "node --test \"tests/unit/*.test.mjs\"",
+    "verify": "node scripts/verify-display.js"
+  },
+  "keywords": ["codebuddy", "hud", "statusline", "terminal"],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}

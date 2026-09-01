@@ -1,0 +1,7 @@
+{
+  "name": "codebuddy-cli-hud",
+  "version": "0.1.0",
+  "description": "A compact terminal HUD for CodeBuddy Code statusLine with subagent/task visualization and diff stats.",
+  "entry": "runtime/bin/codebuddy-hud.js",
+  "commands": ["status", "setup", "uninstall"]
+}
