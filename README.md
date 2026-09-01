@@ -236,17 +236,6 @@ node runtime/bin/codebuddy-hud.js --setup
 
 ---
 
-## 开发与测试
-
-项目使用 CommonJS 和 Node.js 内置模块。
-
-```bash
-node --test "tests/unit/*.test.mjs"
-npm run verify
-node runtime/bin/codebuddy-hud.js --status
-git diff --check
-```
-
 ## 许可证
 
 MIT
