@@ -25,7 +25,7 @@ fi
 echo -e "${GREEN}✔ Found Node.js v${NODE_VERSION}${NC}"
 
 # 2. Download and run bootstrap.js
-TMP_BOOTSTRAP=$(mktemp 2>/dev/null || mktemp -t 'codebuddy-hud-bootstrap')
+TMP_BOOTSTRAP=$(mktemp /tmp/codebuddy-hud-bootstrap.XXXXXX 2>/dev/null || mktemp -t codebuddy-hud-bootstrap 2>/dev/null || mktemp)
 BOOTSTRAP_URL="${CODEBUDDY_HUD_BOOTSTRAP_URL:-https://raw.githubusercontent.com/XisFool/codebuddy-hud/master/scripts/bootstrap.js}"
 
 cleanup() {

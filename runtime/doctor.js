@@ -57,7 +57,14 @@ function checkCodeBuddyConfig(i18n) {
       if (parsedSettings && parsedSettings.statusLine) {
         statusLineCmd = parsedSettings.statusLine.command;
         if (typeof statusLineCmd === 'string' && statusLineCmd.trim()) {
-          statusLineOk = true;
+          const match = statusLineCmd.match(/^\s*"([^"]+)"/) || statusLineCmd.match(/^\s*(\S+)/);
+          const exePath = match ? match[1] : null;
+          if (exePath && fs.existsSync(exePath)) {
+            statusLineOk = true;
+          } else {
+            statusLineOk = false;
+            statusLineMsg = i18n.t('doctorStatusLineInvalid', 'Target executable in statusLine command does not exist');
+          }
         } else {
           statusLineMsg = i18n.t('doctorStatusLineMissing');
         }
@@ -209,18 +216,22 @@ function runDoctor(options) {
   };
 }
 
-function printDoctorReport(report, isJson) {
+function printDoctorReport(report, isJson, options) {
   if (isJson) {
     console.log(JSON.stringify(report, null, 2));
     return;
   }
+
+  const opts = options || {};
+  const config = loadConfig(opts.cwd || process.cwd());
+  const i18n = getI18n(config);
 
   const unicode = supportsUnicode();
   const checkMark = unicode ? '\x1b[32m✔\x1b[0m' : '\x1b[32m[✓]\x1b[0m';
   const warnMark = unicode ? '\x1b[33m!\x1b[0m' : '\x1b[33m[!]\x1b[0m';
   const failMark = unicode ? '\x1b[31m✖\x1b[0m' : '\x1b[31m[✗]\x1b[0m';
 
-  console.log(`\n\x1b[1m\x1b[36m=== CodeBuddy HUD Doctor ===\x1b[0m\n`);
+  console.log(`\n\x1b[1m\x1b[36m=== ${i18n.t('doctorTitle', 'CodeBuddy HUD Doctor')} ===\x1b[0m\n`);
 
   for (const item of report.checks) {
     let mark = checkMark;
@@ -239,11 +250,11 @@ function printDoctorReport(report, isJson) {
 
   console.log('');
   if (report.status === 'ok') {
-    console.log(`\x1b[32m✔ All environment checks passed! HUD is ready.\x1b[0m\n`);
+    console.log(`\x1b[32m✔ ${i18n.t('doctorSummaryPass', 'All environment checks passed! HUD is ready.')}\x1b[0m\n`);
   } else if (report.status === 'warn') {
-    console.log(`\x1b[33m! Some warnings detected. HUD should still work, but check recommendations above.\x1b[0m\n`);
+    console.log(`\x1b[33m! ${i18n.t('doctorSummaryWarn', 'Some warnings detected. HUD should still work, but check recommendations above.')}\x1b[0m\n`);
   } else {
-    console.log(`\x1b[31m✖ Critical issues detected. Please fix the items marked above.\x1b[0m\n`);
+    console.log(`\x1b[31m✖ ${i18n.t('doctorSummaryFail', 'Critical issues detected. Please fix the items marked above.')}\x1b[0m\n`);
   }
 }
 

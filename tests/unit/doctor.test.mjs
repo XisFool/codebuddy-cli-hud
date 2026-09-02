@@ -31,4 +31,29 @@ describe('doctor diagnosis tool', () => {
       printDoctorReport(report, true);
     });
   });
+
+  test('runDoctor flags non-existent statusLine command executable as warn/invalid', () => {
+    const originalSettings = process.env.CODEBUDDY_SETTINGS_PATH;
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cbhud-doctor-test-'));
+    const fakeSettings = path.join(tmpDir, 'settings.json');
+
+    try {
+      fs.writeFileSync(fakeSettings, JSON.stringify({
+        statusLine: { command: '"D:\\non\\existent\\path\\hud.cmd"' }
+      }));
+      process.env.CODEBUDDY_SETTINGS_PATH = fakeSettings;
+
+      const report = runDoctor({ cwd: process.cwd() });
+      const statusLineCheck = report.checks.find(c => c.category === 'codebuddy' && c.name.includes('statusLine'));
+      assert.ok(statusLineCheck);
+      assert.equal(statusLineCheck.status, 'warn');
+    } finally {
+      if (originalSettings === undefined) delete process.env.CODEBUDDY_SETTINGS_PATH;
+      else process.env.CODEBUDDY_SETTINGS_PATH = originalSettings;
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

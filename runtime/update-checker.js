@@ -138,6 +138,12 @@ function spawnBackgroundUpdateCheck() {
       return; // Not due for check yet
     }
 
+    // Persist placeholder lock before spawning to avoid stampede across high-frequency HUD refreshes
+    writeUpdateStatus({
+      ...(currentStatus || {}),
+      lastCheck: now,
+    });
+
     const scriptPath = __filename;
     const child = spawn(process.execPath, [scriptPath, '--run-check'], {
       detached: true,

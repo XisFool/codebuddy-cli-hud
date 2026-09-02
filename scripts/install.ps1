@@ -8,12 +8,13 @@ function Write-ErrorMsg($msg) { Write-Host "✖ $msg" -ForegroundColor Red }
 Write-Host "`n🚀 Installing codebuddy-hud...`n" -ForegroundColor Cyan
 
 # 1. Check Node.js
+$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+if (-not $nodeCmd) {
+    Write-ErrorMsg "Node.js is not found in PATH. Please install Node.js >= 18.0.0 first: https://nodejs.org"
+    exit 1
+}
 try {
-    $nodeVersionRaw = node -v 2>$null
-    if (-not $nodeVersionRaw) {
-        Write-ErrorMsg "Node.js is not found in PATH. Please install Node.js >= 18.0.0 first: https://nodejs.org"
-        exit 1
-    }
+    $nodeVersionRaw = node -v
     $cleanVer = $nodeVersionRaw.TrimStart('v')
     $major = [int]($cleanVer.Split('.')[0])
     if ($major -lt 18) {
@@ -36,6 +37,10 @@ try {
     Invoke-WebRequest -Uri $BootstrapUrl -OutFile $TempBootstrap -UseBasicParsing
     
     node $TempBootstrap
+    if ($LASTEXITCODE -ne 0) {
+        Write-ErrorMsg "Bootstrap installer exited with code $LASTEXITCODE"
+        exit $LASTEXITCODE
+    }
 } catch {
     Write-ErrorMsg "Installation failed: $_"
     exit 1

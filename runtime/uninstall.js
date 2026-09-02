@@ -2,7 +2,15 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getSettingsPath, getUserConfigPath, getCacheStatePath, getCreditStatePath, getTranscriptUsageStateDir, getSessionStatsStateDir } = require('./paths');
+const {
+  getSettingsPath,
+  getUserConfigPath,
+  getCacheStatePath,
+  getCreditStatePath,
+  getTranscriptUsageStateDir,
+  getSessionStatsStateDir,
+  getUpdateStatusPath,
+} = require('./paths');
 const { sanitizeTerminalText } = require('./sanitize');
 
 function uninstall(options) {
@@ -11,6 +19,7 @@ function uninstall(options) {
   const backupPath = settingsPath + '.bak.codebuddy-hud';
   const userConfigPath = getUserConfigPath();
   const cachePath = getCacheStatePath();
+  const updateStatusPath = getUpdateStatusPath();
 
   const creditPath = getCreditStatePath();
   const usageStateDir = getTranscriptUsageStateDir();
@@ -94,6 +103,15 @@ function uninstall(options) {
     if (fs.existsSync(userConfigPath)) {
       fs.unlinkSync(userConfigPath);
       cleaned.push(`Removed user configuration: ${sanitizeTerminalText(userConfigPath, 512)}`);
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    if (fs.existsSync(updateStatusPath)) {
+      fs.unlinkSync(updateStatusPath);
+      cleaned.push(`Removed update status: ${sanitizeTerminalText(updateStatusPath, 512)}`);
     }
   } catch {
     // ignore

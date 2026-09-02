@@ -10,11 +10,13 @@ const REPO_RAW_BASE = process.env.CODEBUDDY_HUD_RAW_BASE || 'https://raw.githubu
 
 const RUNTIME_FILES = [
   'package.json',
+  '.codebuddy-plugin/plugin.json',
   'runtime/codebuddy-hud.config.json',
   'runtime/config.js',
   'runtime/doctor.js',
   'runtime/encoding.js',
   'runtime/git.js',
+  'runtime/lang.js',
   'runtime/model-info.js',
   'runtime/parser.js',
   'runtime/paths.js',
@@ -31,6 +33,7 @@ const RUNTIME_FILES = [
   'runtime/uninstall.js',
   'runtime/update-checker.js',
   'runtime/bin/codebuddy-hud.js',
+  'skills/hud-config/SKILL.md',
 ];
 
 function getTargetDir() {
@@ -116,6 +119,13 @@ async function install() {
         }
       }
       copyDirRecursiveSync(path.join(localRepoRoot, 'runtime'), path.join(tmpDir, 'runtime'));
+      const extraDirs = ['.codebuddy-plugin', 'skills'];
+      for (const d of extraDirs) {
+        const src = path.join(localRepoRoot, d);
+        if (fs.existsSync(src)) {
+          copyDirRecursiveSync(src, path.join(tmpDir, d));
+        }
+      }
     } else {
       console.log('  Mode: Remote download from GitHub');
       for (const relPath of RUNTIME_FILES) {

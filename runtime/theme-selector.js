@@ -141,6 +141,7 @@ function selectThemeInteractive(opts) {
       }
       process.stdin.removeListener('keypress', onKeypress);
       rl.close();
+      try { process.stdin.pause(); } catch {}
     }
 
     function render() {

@@ -13,6 +13,7 @@ const {
   readUpdateStatus,
   writeUpdateStatus,
   checkForUpdates,
+  spawnBackgroundUpdateCheck,
 } = require('../../runtime/update-checker.js');
 const { getUpdateStatusPath } = require('../../runtime/paths.js');
 
@@ -79,6 +80,25 @@ describe('update-checker', () => {
 
       const result = await checkForUpdates({ force: false });
       assert.deepEqual(result, existingStatus);
+    } finally {
+      if (originalCodeBuddyHome === undefined) delete process.env.CODEBUDDY_HOME;
+      else process.env.CODEBUDDY_HOME = originalCodeBuddyHome;
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  test('spawnBackgroundUpdateCheck sets placeholder timestamp to avoid process stampede', () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'cbhud-update-stampede-test-'));
+    const originalCodeBuddyHome = process.env.CODEBUDDY_HOME;
+    process.env.CODEBUDDY_HOME = tmpHome;
+
+    try {
+      assert.equal(readUpdateStatus(), null);
+      spawnBackgroundUpdateCheck();
+      const statusAfterSpawn = readUpdateStatus();
+      assert.ok(statusAfterSpawn);
+      assert.ok(statusAfterSpawn.lastCheck > 0);
+      assert.ok(Date.now() - statusAfterSpawn.lastCheck < 5000);
     } finally {
       if (originalCodeBuddyHome === undefined) delete process.env.CODEBUDDY_HOME;
       else process.env.CODEBUDDY_HOME = originalCodeBuddyHome;
