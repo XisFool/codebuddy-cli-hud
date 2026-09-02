@@ -31,7 +31,10 @@ function saveUserTheme(themeName) {
   let userConfig = {};
   try {
     if (fs.existsSync(configPath)) {
-      userConfig = JSON.parse(fs.readFileSync(configPath, 'utf8')) || {};
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        userConfig = parsed;
+      }
     }
   } catch {
     userConfig = {};
@@ -47,7 +50,8 @@ function getActiveThemeName() {
     const configPath = getUserConfigPath();
     if (fs.existsSync(configPath)) {
       const userConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      if (userConfig && typeof userConfig.theme === 'string' && THEME_PRESETS[userConfig.theme]) {
+      if (userConfig && typeof userConfig === 'object' && !Array.isArray(userConfig)
+          && typeof userConfig.theme === 'string' && THEME_PRESETS[userConfig.theme]) {
         return userConfig.theme;
       }
     }
@@ -119,13 +123,19 @@ function selectThemeInteractive(opts) {
     });
     readline.emitKeypressEvents(process.stdin, rl);
 
+    function restoreCursor() {
+      try { process.stdout.write('\x1b[?25h'); } catch {}
+    }
+    process.once('exit', restoreCursor);
+
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(true);
     }
     process.stdout.write('\x1b[?25l'); // Hide cursor
 
     function cleanup() {
-      process.stdout.write('\x1b[?25h'); // Show cursor
+      process.removeListener('exit', restoreCursor);
+      restoreCursor();
       if (process.stdin.isTTY) {
         process.stdin.setRawMode(false);
       }

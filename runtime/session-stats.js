@@ -102,13 +102,17 @@ function readState(statePath, identityHash) {
 }
 
 function writeState(statePath, state) {
+  let tmpPath = null;
   try {
     const dir = path.dirname(statePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const tmpPath = `${statePath}.tmp-${process.pid}-${Date.now()}`;
+    tmpPath = `${statePath}.tmp-${process.pid}-${Date.now()}`;
     fs.writeFileSync(tmpPath, JSON.stringify(state));
     fs.renameSync(tmpPath, statePath);
   } catch {
+    if (tmpPath) {
+      try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+    }
     // State persistence is optional. Rendering must never fail because a home
     // directory is read-only or another HUD process is replacing this file.
   }

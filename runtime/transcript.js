@@ -425,15 +425,19 @@ function readSessionState(statePath, resolved, identity, size, headHash, fd) {
 }
 
 function writeSessionState(statePath, state) {
+  let tmpPath = null;
   try {
     const dir = path.dirname(statePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     // Unique temp files prevent concurrent HUD processes from overwriting one
     // another's temporary contents before the final rename.
-    const tmpPath = `${statePath}.tmp-${process.pid}-${Date.now()}`;
+    tmpPath = `${statePath}.tmp-${process.pid}-${Date.now()}`;
     fs.writeFileSync(tmpPath, JSON.stringify(state));
     fs.renameSync(tmpPath, statePath);
   } catch {
+    if (tmpPath) {
+      try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+    }
     // Persistence is best effort; this invocation still returns its total.
   }
 }

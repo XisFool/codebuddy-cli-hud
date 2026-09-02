@@ -146,9 +146,9 @@ HUD 会自动感知 CodeBuddy 全局主题配置与终端背景环境变量（`C
 node runtime/bin/codebuddy-hud.js --setup
 ```
 
-### Unicode 图标或进度条乱码
+### Unicode 图标或进度条乱码 / 强制切换
 
-先强制使用 ASCII：
+强制使用 ASCII（兼容纯文本终端）：
 
 ```powershell
 $env:CODEBUDDY_HUD_FORCE_ASCII = '1'
@@ -156,6 +156,16 @@ $env:CODEBUDDY_HUD_FORCE_ASCII = '1'
 
 ```sh
 export CODEBUDDY_HUD_FORCE_ASCII=1
+```
+
+强制启用 Unicode（在支持 UTF-8 的终端强制开启）：
+
+```powershell
+$env:CODEBUDDY_HUD_FORCE_UNICODE = '1'
+```
+
+```sh
+export CODEBUDDY_HUD_FORCE_UNICODE=1
 ```
 
 也可以删除 CodeBuddy 根目录中的 `codebuddy-hud-cache-state.json` 后重新打开会话，让 HUD 重新检测终端编码。
@@ -203,18 +213,28 @@ node runtime/bin/codebuddy-hud.js --uninstall
 }
 ```
 
-| 配置 | 作用 |
-| --- | --- |
-| `theme` | 主题名称（`"ocean"`、`"emerald"`、`"cyberpunk"`、`"amber"`、`"monochrome"`）或自定义调色对象。 |
-| `themeMode` | 模式自适应（`"auto"`、`"dark"`、`"light"`）。 |
-| `display.showTokenBar` | 显示或隐藏 Token 与上下文进度条。 |
-| `display.showCacheHitRate` | 显示或隐藏缓存命中率。 |
-| `display.showDiffStats` | 显示或隐藏代码变更统计。 |
-| `display.showCost` | 显示或隐藏 Credits。 |
-| `display.showDuration` | 显示或隐藏总耗时与 API 耗时。 |
-| `display.showToolActivity` | 显示或隐藏最近工具活动与聚合频次。 |
-| `display.unicode` | `"auto"`、`true` 或 `false`。 |
-| `display.useNerdFonts` | 设为 `true` 时使用 Nerd Fonts 图标。 |
+| 配置 | 类型 / 默认值 | 作用 |
+| --- | --- | --- |
+| `theme` | `string` / `"ocean"` | 主题名称（`"ocean"`、`"emerald"`、`"cyberpunk"`、`"amber"`、`"monochrome"`）或自定义调色对象。 |
+| `themeMode` | `string` / `"auto"` | 模式自适应（`"auto"`、`"dark"`、`"light"`）。 |
+| `display.showTokenBar` | `boolean` / `true` | 显示或隐藏 Token 与上下文进度条。 |
+| `display.showDiffStats` | `boolean` / `true` | 显示或隐藏代码变更统计（Line 3）。 |
+| `display.showCost` | `boolean` / `true` | 显示或隐藏 Credits / 成本消费（Line 3）。 |
+| `display.showDuration` | `boolean` / `true` | 显示或隐藏总耗时与 API 耗时（Line 3）。 |
+| `display.showCurrentDir` | `boolean` / `true` | 显示或隐藏当前目录名（Line 1）。 |
+| `display.showGitBranch` | `boolean` / `true` | 显示或隐藏 Git 分支名与脏标记（Line 1）。 |
+| `display.showPermissionMode` | `boolean` / `true` | 显示或隐藏权限模式（Line 1）。 |
+| `display.showVersion` | `boolean` / `false` | 显示或隐藏宿主版本号（Line 1）。 |
+| `display.showAgentStatus` | `boolean` / `true` | 显示或隐藏子代理与任务队列（Line 4）。 |
+| `display.showToolActivity` | `boolean` / `true` | 显示或隐藏最近工具活动与聚合频次（Line 4）。 |
+| `display.toolActivityTailBytes` | `number` / `16384` | transcript 回扫初始滑窗字节数。 |
+| `display.progressBarWidth` | `number` / `10` | 上下文进度条字符宽度。 |
+| `display.maxLines` | `number` / `4` | 最大输出行数（结构上限 ≤4 行）。 |
+| `display.unicode` | `string|boolean` / `"auto"` | `"auto"`、`true` 或 `false`。 |
+| `display.useNerdFonts` | `boolean` / `false` | 设为 `true` 时使用 Nerd Fonts 图标。 |
+| `thresholds` | `object` | 上下文使用率进度条颜色阈值，默认 `{ "warning": 0.7, "critical": 0.9 }`。 |
+| `cacheHitThresholds` | `object` | Cache 命中率四级色阶阈值，默认 `{ "excellent": 80, "partial": 50 }`。 |
+| `defaultEffortLevel` | `string` / `"medium"` | 默认思考推理强度兜底（`"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`, `"ultracode"`）。 |
 
 无论怎样配置，HUD 都不会超过 4 行。
 
@@ -245,7 +265,7 @@ Credits 是当前 `transcript_path` 对应会话的**累计实际消费**：它�
 
 ---
 
-## 高级路径设置
+## 高级路径与环境变量设置
 
 默认 CodeBuddy 根目录为 `~/.codebuddy`。需要隔离测试、便携安装或排障时，可以使用：
 
@@ -253,6 +273,8 @@ Credits 是当前 `transcript_path` 对应会话的**累计实际消费**：它�
 | --- | --- |
 | `CODEBUDDY_HOME` | 覆盖 CodeBuddy 根目录；HUD 缓存与 transcript 状态放在其中。 |
 | `CODEBUDDY_SETTINGS_PATH` | 直接指定 `settings.json`，优先级高于 `CODEBUDDY_HOME`。 |
+| `CODEBUDDY_HUD_FORCE_ASCII` | 设为 `1` 时强制使用 ASCII 字符，禁用 Unicode 图标与进度条。 |
+| `CODEBUDDY_HUD_FORCE_UNICODE` | 设为 `1` 时强制开启 Unicode 图标与进度条。 |
 
 PowerShell：
 

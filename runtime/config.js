@@ -209,7 +209,8 @@ function deepMerge(target, source, depth) {
 
 function loadJsonFile(filePath) {
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return (data && typeof data === 'object' && !Array.isArray(data)) ? data : null;
   } catch {
     return null;
   }

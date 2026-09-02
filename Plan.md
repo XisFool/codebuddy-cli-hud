@@ -1,5 +1,7 @@
 # Implementation Plan: Turn Cache Hit Rate Badge & Open-Source Hardening for codebuddy-cli-hud
 
+> **Note**: 本文档为功能演进阶段的历史设计规划初稿（已完成交付并归档）。当前权威架构、测试套件规模（297 用例）与行为契约请以 [AGENTS.md](file:///D:/code_sum/Github/codebuddy-cli-hud/AGENTS.md) 及 `runtime/` 源码为准。
+
 ## 1. Project Background & Constraints
 - **Target Host**: CodeBuddy Code CLI `statusLine` command.
 - **Protocol**: Stdin reads JSON payload every ~300ms → Synchronously renders ANSI colored multi-line HUD → Immediately exits with code 0.

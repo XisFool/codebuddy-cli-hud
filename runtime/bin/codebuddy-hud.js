@@ -130,11 +130,13 @@ if (args.includes('--setup')) {
   }
   process.exitCode = 0;
 } else if (args.includes('--status')) {
+  let statusCwd = '';
+  try { statusCwd = process.cwd(); } catch { statusCwd = ''; }
   const samplePayload = JSON.stringify({
     model: { id: 'deepseek-v4-flash', display_name: 'DeepSeek V4 Flash' },
     reasoning_effort: 'max',
     permission_mode: 'default',
-    cwd: process.cwd(),
+    cwd: statusCwd,
     version: '0.1.0',
     cost: { credits: 82.04, total_cost_usd: 0, total_duration_ms: 10020000, total_api_duration_ms: 4980000, total_lines_added: 1700, total_lines_removed: 161 },
     context_window: { total_input_tokens: 249000, total_output_tokens: 1100, context_window_size: 1000000, used_percentage: 25, current_usage: { input_tokens: 249000, output_tokens: 1100, cache_read_input_tokens: 241032, cache_creation_input_tokens: 0 } },
