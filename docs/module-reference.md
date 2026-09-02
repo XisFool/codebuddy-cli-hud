@@ -1,140 +1,438 @@
 # CodeBuddy HUD 模块 API 参考手册 (Module Reference)
 
-本文档系统梳理 `runtime/` 目录下的所有核心模块接口、职责划分、参数规范与设计边界。
+> **版本：** `v0.1.0+`  
+> **根路径：** 所有模块相对路径均以仓库根目录或 `~/.codebuddy/codebuddy-hud-runtime/` 为基准。
 
 ---
 
-## 1. `runtime/parser.js`
+## 📑 模块目录索引
 
-负责从宿主传入的原始 stdin JSON payload 中安全提取各类统计数据。
-
-- `parseCodeBuddyInput(rawStdin: string): object | null`
-  - 安全解析 JSON 输入，失败返回 `null`。
-- `extractTokenData(cbData: object): { inTokens, outTokens, ctxSize, ctxPercent } | null`
-  - 提取当前输入、输出 token 与上下文窗口大小及用量比例。
-- `extractDiffStats(cbData: object): { added: number, removed: number }`
-  - 提取代码增删行数。
-- `extractCostData(cbData: object): { credits: number, totalDurationMs: number, apiDurationMs: number } | null`
-  - 提取消费与耗时数据。
-- `extractAgentData(cbData: object): { activeAgents, runningTasks, completedTasks, queuedTasks }`
-  - 提取子代理与后台任务列表。
-
----
-
-## 2. `runtime/config.js`
-
-负责多层级配置合并与主题系统调色板解析。
-
-- `loadConfig(cwd?: string): object`
-  - 按优先级合并默认配置、内置配置、用户全局配置（`~/.codebuddy/codebuddy-hud.config.json`）与项目局部配置（`./codebuddy-hud.config.json`）。
-- `deepMerge(target: object, source: object, depth?: number): object`
-  - 深度不可变合并，自动忽略 `__proto__` 键，深度上限 64。
-- `resolveTheme(config: object): object`
-  - 解析主题调色板，支持深色（dark）与浅色（light）模式自适应。
-- `detectThemeMode(config: object): 'dark' | 'light'`
-  - 根据配置或终端环境变量 `COLORFGBG` 判定明暗色调。
+1. [`runtime/bin/codebuddy-hud.js` — CLI 统一入口与执行调度器](#1-runtimebincodebuddy-hudjs--cli-入口与执行调度器)
+2. [`runtime/parser.js` — 宿主输入 JSON 解析与边界清洗](#2-runtimeparserjs--宿主输入解析与边界清洗)
+3. [`runtime/config.js` — 多层配置合并与主题调色板引擎](#3-runtimeconfigjs--多层配置合并与主题引擎)
+4. [`runtime/renderer.js` — 4 行看板装配与布局编排器](#4-runtimerendererjs--4-行看板装配与布局编排)
+5. [`runtime/renderer/format.js` — 格式化、进度条与 Cache 徽标](#5-runtimerendererformatjs--格式化进度条与-cache-徽标)
+6. [`runtime/renderer/diff-render.js` — 代码变更、Credits 与耗时渲染器](#6-runtimerendererdiff-renderjs--代码变更credits-与耗时渲染)
+7. [`runtime/renderer/agents-render.js` — 子代理与工具活动频次聚合渲染器](#7-runtimerendereragents-renderjs--子代理与工具活动聚合渲染)
+8. [`runtime/renderer/lang.js` & `runtime/lang.js` — 多语言国际化字典与探测器](#8-runtimerendererlangjs--runtimelangjs--多语言国际化)
+9. [`runtime/transcript.js` — 逆向滑窗遥测与增量 Checkpoint 状态机](#9-runtimetranscriptjs--逆向滑窗遥测与-checkpoint-状态机)
+10. [`runtime/session-stats.js` — 会话基线捕获与 `/clear` 重置状态机](#10-runtimesession-statsjs--会话基线与-clear-重置状态机)
+11. [`runtime/git.js` — Git 分支与 Dirty 状态非阻塞探测器](#11-runtimegitjs--git-分支与状态探测器)
+12. [`runtime/encoding.js` — 终端字符集探测与 Windows 代码页缓存](#12-runtimeencodingjs--终端字符集探测与编码缓存)
+13. [`runtime/sanitize.js` — 终端文本安全清洗与 ANSI/Bidi 注入防御](#13-runtimesanitizejs--终端文本安全清洗器)
+14. [`runtime/paths.js` — 跨平台路径解析与状态目录管理](#14-runtimepathsjs--跨平台路径解析与目录管理)
+15. [`runtime/statusline-installer.js` — 状态栏注册与 Windows Shim 烘焙器](#15-runtimestatusline-installerjs--状态栏注册与-shim-烘焙)
+16. [`runtime/doctor.js` — 环境体检与排障诊断子系统](#16-runtimedoctorjs--环境体检与排障诊断)
+17. [`runtime/update-checker.js` — 24h 异步更新检查与防惊群预占位锁](#17-runtimeupdate-checkerjs--异步更新检查与防惊群锁)
+18. [`runtime/theme-selector.js` — 交互式终端主题选择器](#18-runtimetheme-selectorjs--交互式主题选择器)
+19. [`runtime/uninstall.js` — 卸载还原与状态深度清理器](#19-runtimeuninstalljs--卸载还原与深度清理)
+20. [`scripts/bootstrap.js` — 跨平台原子安装引导程序](#20-scriptsbootstrapjs--跨平台原子安装引导)
 
 ---
 
-## 3. `runtime/renderer.js`
+## 1. `runtime/bin/codebuddy-hud.js` — CLI 入口与执行调度器
 
-HUD 看板 4 行组装与渲染核心。
+**职责：** 状态栏执行入口，注册为 `statusLine.command`。负责命令行参数分发、stdin 管道超时竞争、顶层错误捕获、自然 Drain 退出与后台更新派生。
 
-- `renderHUD(cbData: object, config: object): string`
-  - 综合调用子渲染模块，输出最终 $\le 4$ 行 ANSI 字符串。
+### 命令行参数支持 (CLI Flags)
+- `--setup`: 执行安装，写入 `settings.json` 并生成 Windows `.cmd` shim。
+- `--uninstall`: 恢复 `settings.json` 备份并清理所有缓存状态。
+- `--theme [name]`: 交互式切换或指定设置主题（如 `--theme cyberpunk`、`--theme list`）。
+- `--doctor` / `-d`: 运行环境健康体检（支持 `--json` 输出结构化报告）。
+- `--status`: 输出当前 HUD 静态看板样例（用于健康探测）。
 
-### 子渲染器 (`runtime/renderer/`)
-- `format.js`:
-  - `formatTokens(num: number): string`：格式化 token 数量（如 `1.5k`, `2.1M`）。
-  - `createProgressBar(pct: number, width: number, thresholds: object, glyphs: object): string`：生成彩色用量进度条。
-  - `calculateTurnCacheMetrics(...)` / `formatTurnCacheBadge(...)`：Prompt Cache 命中率徽标生成。
-- `diff-render.js`:
-  - `renderDiffSegment(diffStats, costData, config, glyphs, creditSpend): string | null`：渲染 Line 3 变更与花费行。
-- `agents-render.js`:
-  - `renderAgentLine(...)` / `renderToolActivity(...)`：渲染 Line 4 代理与工具调用状态。
-- `lang.js`:
-  - `getI18n(config: object): { lang, t(key, fallback), dict }`：多语言字典查询与翻译辅助。
+### 关键常量 (Constants)
+```javascript
+const TIMEOUT_MS = 800;          // Stdin 安全超时，预留 700ms 给渲染与 stdout 刷新
+const LOG_MAX_BYTES = 1024 * 1024; // 错误日志 1MB 自动轮转上限
+const MAX_STDIN_SIZE = 1024 * 1024;// Stdin 接收上限 1MB，防超大管道内存溢出
+```
 
----
-
-## 4. `runtime/transcript.js`
-
-负责 `transcript.jsonl` 日志的逆向滑窗扫描与增量统计。
-
-- `getTurnUsageMetrics(transcriptPath: string, opts?: object): { hitTokens, promptTokens, credits } | null`
-  - 从 EOF 回扫当前轮次（至上一次 `role: 'user'`）的所有 API 调用 usage。
-- `getSessionUsageMetrics(transcriptPath: string, opts?: object): { credits: number } | null`
-  - 基于 SHA-256 Checkpoint 机制的增量 Credits 累计。
-- `getTurnToolActivity(transcriptPath: string, opts?: object): object | null`
-  - 提取当前轮次正在执行的活跃工具与已完成工具频次聚合。
+### 错误与退出契约 (Design Decisions & Why)
+- **Why `process.stdout.on('error', () => {})`?**  
+  当宿主因超时或快速切屏提前杀掉接收管道时，Node.js 会向 stdout 发送异步 `EPIPE` 事件。未捕获会导致进程以 exit 1 崩溃并输出堆栈；静默捕获该错误是 CLI 工具在管道截断下的标准容灾手段。
+- **Why Natural Event Loop Drain 代替 `process.exit(0)`?**  
+  直接调用 `process.exit()` 会强制中断 libuv 未排空的 stdout 缓冲区，导致终端接收到半截 ANSI 字符。通过 `process.exitCode = 0` 并关闭 stdin 句柄，允许事件循环自然排空，保证字符完整刷出。
 
 ---
 
-## 5. `runtime/session-stats.js`
+## 2. `runtime/parser.js` — 宿主输入解析与边界清洗
 
-管理会话重置与指标差值逻辑。
+**职责：** 从 CodeBuddy 传入的原始 stdin JSON 字符串中安全提取会话、Token、变更、消费与 Agent 指标。
 
-- `getLogicalSessionCostData(cbData: object, rawStats: object, opts?: object): object`
-  - 识别 `/clear` 场景，记录状态基线并返回相对于基线的实际会话增量。
+### 接口定义 (TypeScript Signatures)
+
+```typescript
+export function parseCodeBuddyInput(rawStdin: string | null | undefined): CodeBuddyPayload | null;
+
+export function extractTokenData(cbData: CodeBuddyPayload): {
+  inTokens: number;
+  outTokens: number;
+  ctxSize: number;
+  ctxPercent: number;
+} | null;
+
+export function extractDiffStats(cbData: CodeBuddyPayload): {
+  linesAdded: number;
+  linesRemoved: number;
+};
+
+export function extractCostData(cbData: CodeBuddyPayload): {
+  totalCostUsd: number;
+  totalDurationMs: number;
+  apiDurationMs: number;
+  credits: number | null;
+} | null;
+
+export function extractAgentData(cbData: CodeBuddyPayload): {
+  active: Array<{ id: string; name?: string; status: string }>;
+  queueDepth: number;
+  completedCount: number;
+  totalCount: number;
+} | null;
+```
+
+### 数据结构 Shape
+```javascript
+// CodeBuddyPayload 基础形态
+{
+  model?: { id: string; display_name?: string },
+  context_window?: {
+    total_input_tokens?: number,
+    total_output_tokens?: number,
+    context_window_size?: number,
+    used_percentage?: number,
+    current_usage?: {
+      input_tokens?: number,
+      output_tokens?: number,
+      cache_read_input_tokens?: number
+    }
+  },
+  cost?: {
+    total_cost_usd?: number,
+    total_duration_ms?: number,
+    total_api_duration_ms?: number,
+    total_lines_added?: number,
+    total_lines_removed?: number
+  },
+  agents?: Array<{ id: string, name?: string, status: string }>,
+  tasks?: { total: number, completed: number, pending: number }
+}
+```
 
 ---
 
-## 6. `runtime/git.js`
+## 3. `runtime/config.js` — 多层配置合并与主题引擎
 
-Git 仓库状态快速探测。
+**职责：** 读取并深度合并各层配置，解析明暗主题调色板。
 
-- `getGitStatus(cwd: string, timeoutMs?: number): { branch: string, dirty: boolean } | null`
-  - 单次 `git status --porcelain -b` 探测分支与脏状态，超时保底 200ms。
+### 接口定义
+```typescript
+export function loadConfig(cwd?: string): ResolvedConfig;
+export function deepMerge<T extends object>(target: T, source: object, depth?: number): T;
+export function resolveTheme(config: ResolvedConfig): ThemePalette;
+export function detectThemeMode(config: ResolvedConfig): 'dark' | 'light';
+```
 
----
+### 内置主题预设 (THEME_PRESETS)
+- `ocean` (默认): 深海青蓝科技风 (`#00b4d8` + `#90e0ef`)
+- `emerald`: 翡翠绿清新护眼 (`#2ec4b6` + `#a7c957`)
+- `cyberpunk`: 赛博朋克炫酷粉紫+荧光青 (`#ff007f` + `#00f0ff`)
+- `amber`: 琥珀金复古沉稳 (`#ffb703` + `#fb8500`)
+- `monochrome`: 黑白极简经典终端 (`#e0e0e0` + `#8a8a8a`)
 
-## 7. `runtime/encoding.js`
-
-终端字符集与字体图标适配。
-
-- `supportsUnicode(): boolean`
-  - 检测终端是否支持 Unicode（Windows 通过 `chcp.com` 探测并缓存）。
-- `selectGlyphs(useNerdFonts: boolean, unicodeSupported: boolean): object`
-  - 根据环境选取 Nerd Fonts、Unicode 或纯 ASCII 符号集。
-
----
-
-## 8. `runtime/sanitize.js`
-
-终端文本安全防御。
-
-- `sanitizeTerminalText(text: string, maxLen?: number): string`
-  - 剔除 ANSI 转义字符、OSC 序列、C0/C1 控制符与 Bidi 伪装字符，并进行长度截断。
-
----
-
-## 9. `runtime/statusline-installer.js` 与 `scripts/bootstrap.js`
-
-一键安装与配置引导器。
-
-- `setup(options?: object)`:
-  - 写入 `settings.json` 并生成 Windows `.cmd` shim。
-- `uninstall(options?: object)`:
-  - 恢复 `settings.json` 备份并清理 shim、缓存与状态文件。
+### 安全机制 (Why)
+`deepMerge()` 内部校验：
+```javascript
+if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+```
+严格阻断恶意配置文件通过伪造 `__proto__` 污染 V8 原型链。
 
 ---
 
-## 10. `runtime/doctor.js`
+## 4. `runtime/renderer.js` — 4 行看板装配与布局编排
 
-环境诊断与排障工具。
+**职责：** 核心布局引擎，协调各子渲染器装配 4 行看板，执行空行智能裁剪与终端安全转义。
 
-- `runDoctor(options?: object): { timestamp, status, ok, checks }`
-  - 采集 Node、CodeBuddy 配置、终端编码、Git 与 Transcript 状态报告。
-- `printDoctorReport(report: object, isJson: boolean)`
-  - 格式化输出终端彩色清单或标准 JSON。
+### 接口定义
+```typescript
+export function renderHUD(
+  cbData: CodeBuddyPayload | null,
+  config?: ResolvedConfig,
+  overrides?: {
+    turnCacheMetrics?: TurnCacheMetrics | null;
+    toolActivity?: ToolActivity | null;
+    sessionCreditSpend?: number | null;
+    logicalSessionCost?: LogicalCostData | null;
+  }
+): string;
+```
+
+### 4 行输出排版规范
+- **Line 1 (Identity)**: `[ModelName] [EffortIcon] │ [Branch*] │ [Workspace] │ [Permission] [UpdateBadge]`
+- **Line 2 (Tokens)**: `Token 250.1k (in: 249k · out: 1.1k) │ 249k/1M [███░░░░░░░] 25% │ cache 96.8%`
+- **Line 3 (Diff/Cost)**: `Δ +1.7k -161 │ 82.04 credits │ ⏱ 2h47m (API: 1h23m)` (全空自动隐藏)
+- **Line 4 (Agents/Tools)**: `⚙ 2 active (explorer, coder) │ ◂ Queue: 3 │ ✓ Done 5/8 │ ✓ Edit ×3` (全空自动隐藏)
 
 ---
 
-## 11. `runtime/update-checker.js`
+## 5. `runtime/renderer/format.js` — 格式化、进度条与 Cache 徽标
 
-后台无感异步版本更新检测。
+**职责：** 基础文本格式化、用量进度条与 Prompt Cache 徽标渲染。
 
-- `checkForUpdates(options?: object): Promise<object>`
-  - 检查远端版本并更新 `codebuddy-hud-update-status.json`。
-- `spawnBackgroundUpdateCheck()`
-  - 派生独立后台进程执行检查，主进程零等待。
+### 核心函数列表
+- `formatTokens(num: number): string`: 格式化数字为 `1.2k`、`3.5M`。特别处理 `999.5` 边界防止四舍五入溢出为 `1000k`。
+- `formatDurationMs(ms: number): string`: 格式化毫秒数为 `12s`、`5m20s`、`2h15m`。
+- `createProgressBar(pct: number, width: number, thresholds: object, glyphs: object): string`: 生成自适应色阶进度条。
+- `calculateTurnCacheMetrics(usageMetrics, currentUsage): TurnCacheMetrics`: 计算综合缓存命中率。
+- `formatTurnCacheBadge(metrics, glyphs, config): string`: 渲染三态徽标：`cache 98.5%`、`cache --` 或空。
+
+---
+
+## 6. `runtime/renderer/diff-render.js` — 代码变更、Credits 与耗时渲染
+
+**职责：** 装配 Line 3 代码增删指标、累计实际 Credits 扣费与耗时。
+
+### 接口定义
+```typescript
+export function renderDiffSegment(
+  diffStats: { linesAdded: number; linesRemoved: number },
+  costData: { totalCostUsd?: number; totalDurationMs?: number; apiDurationMs?: number },
+  config: ResolvedConfig,
+  glyphs: GlyphSet,
+  creditSpend?: number | null,
+  legacyCreditSpend?: number | null
+): string;
+
+export function formatCreditSpend(creditSpend: number): string; // "82.04 credits"
+```
+
+---
+
+## 7. `runtime/renderer/agents-render.js` — 子代理与工具活动聚合渲染
+
+**职责：** 装配 Line 4 活动子代理列表、任务队列状态与本轮已完成工具调用频次聚合。
+
+### 接口定义
+```typescript
+export function renderAgentLine(agentData: AgentData, config: ResolvedConfig, glyphs: GlyphSet): string;
+export function renderToolActivity(activity: ToolActivity, glyphs: GlyphSet): string;
+```
+
+### 工具聚合输出格式
+```
+✓ Edit ×3    ✓ View ×12    ◐ RunCommand: "npm test"
+```
+
+---
+
+## 8. `runtime/renderer/lang.js` & `runtime/lang.js` — 多语言国际化
+
+**职责：** 提供集中化中英双语词典，自动探测系统环境语言并提供 `t()` 翻译辅助函数。
+
+### 接口定义
+```typescript
+export function detectLanguage(config?: { language?: string }): 'zh' | 'en';
+export function getI18n(config?: ResolvedConfig): {
+  lang: 'zh' | 'en';
+  t: (key: string, fallback?: string) => string;
+  dict: Record<string, string>;
+};
+```
+
+---
+
+## 9. `runtime/transcript.js` — 逆向滑窗遥测与 Checkpoint 状态机
+
+**职责：** 高性能逆向滑窗读取 `transcript.jsonl`，聚合当前轮次 API Usage，并以增量 Checkpoint 计算累计 Credits。
+
+### 接口定义
+```typescript
+export function getTurnUsageMetrics(
+  transcriptPath: string | null,
+  opts?: { cwd?: string; maxScanBytes?: number }
+): {
+  hitTokens: number;
+  promptTokens: number;
+  credits: number;
+} | null;
+
+export function getSessionUsageMetrics(
+  transcriptPath: string | null,
+  opts?: { statePath?: string; cwd?: string }
+): {
+  credits: number;
+} | null;
+
+export function getTurnToolActivity(
+  transcriptPath: string | null,
+  opts?: { cwd?: string }
+): {
+  active?: { tool: string; detail?: string };
+  completed: Array<{ tool: string; count: number }>;
+  totalCompleted: number;
+} | null;
+```
+
+---
+
+## 10. `runtime/session-stats.js` — 会话基线与 `/clear` 重置状态机
+
+**职责：** 监控上下文与指标单调性，识别 `/clear` 场景并扣除历史基线。
+
+### 接口定义
+```typescript
+export function getLogicalSessionCostData(
+  cbData: CodeBuddyPayload,
+  rawCostData: CostData,
+  opts?: { statePath?: string }
+): {
+  linesAdded: number;
+  linesRemoved: number;
+  totalDurationMs: number;
+  apiDurationMs: number;
+};
+```
+
+---
+
+## 11. `runtime/git.js` — Git 分支与状态探测器
+
+**职责：** 单次 `git status --porcelain -b` 快速获取分支名与脏文件标记（`*`）。
+
+### 接口定义
+```typescript
+export function getGitStatus(
+  cwd?: string,
+  timeoutMs?: number // 默认 200ms 超时保底
+): {
+  branch: string;
+  dirty: boolean;
+  durationMs: number;
+} | null;
+```
+
+---
+
+## 12. `runtime/encoding.js` — 终端字符集探测与编码缓存
+
+**职责：** 探测终端 Unicode/NerdFonts 支持，Windows 下自动探测 `chcp 65001` 并缓存。
+
+### 接口定义
+```typescript
+export function supportsUnicode(): boolean;
+export function selectGlyphs(useNerdFonts: boolean, unicodeSupported: boolean): GlyphSet;
+export function resetCache(): void;
+```
+
+---
+
+## 13. `runtime/sanitize.js` — 终端文本安全清洗器
+
+**职责：** 剥离外部输入中的 ANSI CSI/OSC 控制序列、Unicode Bidi 伪装字符与 C0/C1 控制符。
+
+### 接口定义
+```typescript
+export function sanitizeTerminalText(text: any, maxLen?: number): string;
+```
+
+---
+
+## 14. `runtime/paths.js` — 跨平台路径解析与目录管理
+
+**职责：** 统一定位 CodeBuddy 配置目录（优先支持 `CODEBUDDY_HOME` 与 `CODEBUDDY_SETTINGS_PATH` 环境变量）。
+
+### 核心路径查询函数
+- `getCodeBuddyHome(): string`: 返回 `~/.codebuddy` 或覆盖路径。
+- `getSettingsPath(): string`: 返回 `settings.json` 绝对路径。
+- `getUserConfigPath(): string`: 返回 `codebuddy-hud.config.json` 路径。
+- `getErrorLogPath(): string`: 返回 `codebuddy-hud-error.log` 路径。
+- `getUpdateStatusPath(): string`: 返回 `codebuddy-hud-update-status.json` 路径。
+- `getTranscriptUsageStateDir(): string`: 返回 `codebuddy-hud-usage-state/` 目录。
+- `getSessionStatsStateDir(): string`: 返回 `codebuddy-hud-session-state/` 目录。
+
+---
+
+## 15. `runtime/statusline-installer.js` — 状态栏注册与 Shim 烘焙
+
+**职责：** 将 HUD 配置写入 `settings.json`，并在 Windows 上烘焙固化 Node 绝对路径的 `.cmd` shim。
+
+### 接口定义
+```typescript
+export function setup(options?: {
+  settingsPath?: string;
+  runtimeDir?: string;
+  platform?: string;
+  nodeExe?: string;
+}): void;
+
+export function buildStatusLineCommand(platform: string, hudBin: string, nodeExe: string): string;
+export function buildCmdShimContent(nodeExe: string): string;
+```
+
+---
+
+## 16. `runtime/doctor.js` — 环境体检与排障诊断
+
+**职责：** 采集 Node、CodeBuddy 配置、终端编码、Git 与 Transcript 状态，执行物理路径真实存在性校验。
+
+### 接口定义
+```typescript
+export function runDoctor(options?: { cwd?: string; env?: object }): DoctorReport;
+export function printDoctorReport(report: DoctorReport, isJson?: boolean): void;
+```
+
+### 诊断项分类 (Checks Categories)
+1. `node`: Node.js 版本（$\ge 18$）、架构与可执行文件路径。
+2. `codebuddy`: `CODEBUDDY_HOME`、`settings.json` 与 `statusLine.command` 指向的目标物理文件存在性校验。
+3. `terminal`: Windows 代码页（`chcp 65001`）、Unicode 支持与明暗色调。
+4. `git`: Git PATH 可达性、当前仓库分支与探测延迟。
+5. `transcript`: 遥测缓存目录读写权限与历史日志存在性。
+
+---
+
+## 17. `runtime/update-checker.js` — 异步更新检查与防惊群锁
+
+**职责：** 后台非阻塞检查 GitHub 最新版本，前置预占位锁防并发进程爆炸。
+
+### 接口定义
+```typescript
+export function checkForUpdates(options?: { force?: boolean }): Promise<UpdateStatus>;
+export function spawnBackgroundUpdateCheck(): void;
+export function compareVersions(v1: string, v2: string): 1 | -1 | 0;
+export function parseSemver(v: string): [number, number, number];
+```
+
+---
+
+## 18. `runtime/theme-selector.js` — 交互式主题选择器
+
+**职责：** 终端 Raw 模式下方向键交互式选择主题，实时动态刷新 ANSI 看板预览，退出时释放 stdin 句柄。
+
+### 接口定义
+```typescript
+export function selectThemeInteractive(): Promise<void>;
+export function printThemeList(config: ResolvedConfig): void;
+```
+
+---
+
+## 19. `runtime/uninstall.js` — 卸载还原与深度清理
+
+**职责：** 还原 `settings.json.bak.codebuddy-hud` 备份，全面清理所有 Shim 脚本、缓存与持久化状态文件。
+
+### 接口定义
+```typescript
+export function uninstall(options?: object): void;
+```
+
+---
+
+## 20. `scripts/bootstrap.js` — 跨平台原子安装引导
+
+**职责：** 支持本地与 GitHub Raw 远程安装，通过临时目录 `.tmp-<pid>` + 原子重命名完成无缝安装覆盖。
+
+### 核心函数
+- `bootstrap(options?: object): Promise<void>`
+- `copyLocalRuntime(sourceDir: string, targetDir: string): void`
+- `downloadRemoteRuntime(targetDir: string): Promise<void>`

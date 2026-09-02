@@ -1,75 +1,237 @@
-# CodeBuddy HUD 架构设计与核心机制 (Architecture)
+# CodeBuddy HUD System Architecture
 
-本文档系统阐述 `codebuddy-hud` 的核心设计哲学、数据流拓扑、逆向遥测回扫算法与容灾降级机制。
+> **Target Version:** `v0.1.0+`  
+> **Host Compatibility:** CodeBuddy Code CLI (`>= 2.90.0`)  
+> **Engine Baseline:** Pure Node.js Standard Library (`>= 18.0.0`, Zero npm dependencies)
 
 ---
 
-## 1. 架构总览与数据流
+## 1. Overview & Core Philosophy
 
-CodeBuddy Code 宿主以约 $300\text{ms}$ 的高频间隔将当前会话的上下文 JSON 写入 `stdin` 并拉起 HUD。HUD 进程必须在单次超时（$800\text{ms}$ stdin 超时，硬上限 $1500\text{ms}$）内输出 $\le 4$ 行 ANSI 格式的状态看板，并通过事件循环自然排空退出（`process.exitCode = 0`）。
+`codebuddy-hud` is a high-performance terminal statusline HUD plugin designed for the **CodeBuddy Code** AI pair-programming assistant. It renders real-time, compact telemetry dashboards directly into the terminal window during active coding sessions.
+
+### Core Architectural Invariants:
+1. **Zero External Dependencies**: Implemented strictly using Node.js built-in standard libraries (`fs`, `path`, `os`, `crypto`, `child_process`, `readline`, `https`). No `node_modules` installation is required.
+2. **Statusline Host Contract**:
+   - **Hard Execution Timeout**: $\le 1500\text{ms}$ total (with an internal stdin read timeout of $800\text{ms}$).
+   - **Constant Zero Exit Code**: The process must **always** terminate with `process.exitCode = 0`. Uncaught runtime exceptions are redirected to `~/.codebuddy/codebuddy-hud-error.log` (capped at 1MB with auto-rotation) to prevent host terminal disruption.
+   - **Output Height Boundary**: Strictly $\le 4$ ANSI-formatted terminal lines. Unused or empty lines are dynamically pruned.
+3. **Truthful & Non-Fabricated Telemetry**: Prompt Cache hit percentages and cumulative Credit expenditures are extracted directly from authentic session `transcript.jsonl` records, gracefully degrading to `cache --` when telemetry is absent.
+
+---
+
+## 2. Two-Layer Physical Design
+
+`codebuddy-hud` separates plugin metadata from the runtime execution engine:
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│  PLUGIN LAYER  (Discovered by CodeBuddy / Agent, root & skills/)        │
+│   .codebuddy-plugin/plugin.json · skills/hud-config/SKILL.md            │
+└────────────────────────────────────┬─────────────────────────────────────┘
+                                     │  bootstrap.js installs & atomizes
+┌────────────────────────────────────▼─────────────────────────────────────┐
+│  RUNTIME LAYER  (~/.codebuddy/codebuddy-hud-runtime/ or repo checkout)  │
+│   runtime/bin/codebuddy-hud.js    ← Registered as statusLine.command     │
+│   runtime/bin/codebuddy-hud.cmd   ← Windows portable shim wrapper        │
+│   parser.js · config.js · paths.js · encoding.js · git.js · sanitize.js │
+│   doctor.js · update-checker.js · session-stats.js · uninstall.js       │
+│   transcript.js (Reverse sliding-window & SHA-256 telemetry scanner)     │
+│   renderer.js (4-Line orchestration) ──> renderer/ (format, diff, agents)│
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Plugin Layer**: Staged in `.codebuddy-plugin/` and `skills/`. Declares metadata, command entries (`status`, `setup`, `uninstall`, `theme`, `doctor`), and AI Agent configuration capabilities.
+- **Runtime Layer**: Deployed locally or via `scripts/bootstrap.js`. Contains all business logic, rendering subsystems, caching state machines, and platform shims.
+
+---
+
+## 3. Module Dependency Graph
 
 ```mermaid
-flowchart TD
-    Host["CodeBuddy Code Host (~300ms)"] -->|"stdin JSON (Session Payload)"| Entry["runtime/bin/codebuddy-hud.js"]
-    Entry --> Parser["parser.js (提取 Tokens, Diff, Agents, Cost)"]
-    Entry --> Config["config.js (合并默认/全局/项目配置与主题)"]
-    Entry --> SessionStats["session-stats.js (/clear 差值与基线管理)"]
-    Entry --> Transcript["transcript.js (逆向滑窗遥测与增量 Checkpoint)"]
-    
-    Parser --> Renderer["renderer.js (4 行看板渲染引擎)"]
-    Config --> Renderer
-    SessionStats --> Renderer
-    Transcript --> Renderer
-    
-    Renderer -->|"stdout ≤4 行 ANSI 看板"| Host
-    
-    subgraph Auxiliary ["辅助与运维子系统"]
-        Doctor["doctor.js (--doctor 诊断)"]
-        Update["update-checker.js (异步24h更新检查)"]
-        Installer["statusline-installer.js / bootstrap.js (原子安装与 Shim)"]
-        Lang["lang.js (多语言字典)"]
-    end
+graph TD
+    Entry["runtime/bin/codebuddy-hud.js"] --> Parser["runtime/parser.js"]
+    Entry --> Config["runtime/config.js"]
+    Entry --> Transcript["runtime/transcript.js"]
+    Entry --> SessionStats["runtime/session-stats.js"]
+    Entry --> Renderer["runtime/renderer.js"]
+    Entry --> Doctor["runtime/doctor.js"]
+    Entry --> UpdateChecker["runtime/update-checker.js"]
+    Entry --> ThemeSelector["runtime/theme-selector.js"]
+    Entry --> Installer["runtime/statusline-installer.js"]
+    Entry --> Uninstall["runtime/uninstall.js"]
+    Entry --> Paths["runtime/paths.js"]
+
+    Renderer --> Format["runtime/renderer/format.js"]
+    Renderer --> DiffRender["runtime/renderer/diff-render.js"]
+    Renderer --> AgentsRender["runtime/renderer/agents-render.js"]
+    Renderer --> Lang["runtime/renderer/lang.js"]
+    Renderer --> Encoding["runtime/encoding.js"]
+    Renderer --> Git["runtime/git.js"]
+    Renderer --> Sanitize["runtime/sanitize.js"]
+
+    Transcript --> Sanitize
+    Transcript --> Paths
+    Doctor --> Lang
+    Doctor --> Paths
+    Doctor --> Encoding
+    Doctor --> Git
+    Installer --> Paths
+    Uninstall --> Paths
 ```
 
 ---
 
-## 2. 核心算法与机制解析
+## 4. Execution Flow per Agent Step
 
-### 2.1 逆向 Transcript 滑窗扫描 (Reverse Sliding-Window Telemetry)
+The CodeBuddy Code host invokes HUD approximately every **$300\text{ms}$** (or upon token streaming bursts). The end-to-end lifecycle executes as follows:
 
-- **背景与痛点**：真实 LLM 遥测数据（如 Prompt 缓存命中率 `rawUsage.prompt_cache_hit_tokens`、实际花费 `credits`、最新工具调用）仅存在于会话的 `transcript.jsonl` 中，而宿主传入的 payload 常有字段缺失或瞬时 0 值偏差。
-- **算法实现**：
-  1. **尾部逆向读取**：从文件 EOF 往前读取固定滑窗（默认 $16\text{KB}$ 至 $256\text{KB}$），避免大文件全量加载占用内存。
-  2. **跨块拼装 (Straddle Reconstruction)**：当滑窗边界切断单行 JSONL 时，自动缓存未完成片段，并在上一滑窗拼装还原为完整 JSON。
-  3. **Turn 边界截断**：从后向前收集所有 API 调用的 usage，直至遇到 `role: 'user'` 消息时停止，以准确呈现“本轮完整交互的综合命中率与消费”。
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Host as CodeBuddy Host (~300ms)
+    participant Entry as codebuddy-hud.js
+    participant Stdin as Stdin Pipe
+    participant Engine as Subsystems (Parser, Config, Transcript, Stats)
+    participant Renderer as renderer.js
+    participant Background as update-checker.js (Detached)
 
-### 2.2 `/clear` 会话基线捕获机制 (Session Baseline Tracking)
+    Host->>Entry: spawn(node codebuddy-hud.js) & pipe stdin JSON
+    activate Entry
+    
+    par Race Timeout and Data
+        Entry->>Stdin: Start 800ms Safety Timer (TIMEOUT_MS)
+        Entry->>Stdin: Collect stdin chunks (max 1MB)
+    end
 
-- **会话识别与重置**：
-  - 用户在宿主执行 `/clear` 指令时，token 与 lines added/removed 出现骤降。
-  - `session-stats.js` 计算当前指标相对于基线的增量差值。若检测到当前总 token 或行数小于前一快照（单调性打破），立即识别为会话重置，自动建立全新基线并重置耗时统计。
+    alt stdin closes normally or 800ms timer fires
+        Entry->>Stdin: process.stdin.destroy() (Release libuv handle)
+        Entry->>Engine: parseCodeBuddyInput(rawStdin)
+        Entry->>Engine: loadConfig() & getGitStatus()
+        Entry->>Engine: getSessionUsageMetrics() & getTurnUsageMetrics()
+        Entry->>Engine: getLogicalSessionCostData()
+        Entry->>Renderer: renderHUD(cbData, config, telemetry)
+        Renderer-->>Entry: formatted ≤4 ANSI lines
+        Entry->>Host: stdout.write(renderedOutput)
+    else Pipe broken (EPIPE / early close)
+        Entry->>Entry: Swallowed via process.stdout.on('error')
+    end
 
-### 2.3 增量 SHA-256 Credits Checkpoint 机制
+    opt Background 24h Check Due
+        Entry->>Background: spawnBackgroundUpdateCheck() [Pre-lock timestamp & detached unref]
+    end
 
-- **独立持久化**：
-  - 对 transcript 文件绝对路径进行 SHA-256 哈希，在 `~/.codebuddy/codebuddy-hud-usage-state/<hash>.json` 记录上次已解析的文件偏移量 `offset` 与累计 `credits`。
-- **增量读取**：
-  - 下次刷新时仅从 `offset` 处向后扫描新增内容，极大降低磁盘 I/O 消耗（单次增量解析 $< 2\text{ms}$）。
-  - 若检测到文件被截断或原地覆写（inode/size 异常），状态机自动判定并无缝回退全量重建。
-
-### 2.4 4 行自适应布局与终端安全契约
-
-- **Line 1 (Identity & Environment)**：模型名称、推理深度（effort）、Git 分支与 Dirty 标记、当前工作区目录名、权限模式、版本与更新角标。
-- **Line 2 (Tokens & Context)**：总 Tokens（带 in/out 拆解）、空心/实心进度条、上下文用量百分比、本轮 Cache 命中率。
-- **Line 3 (Diff & Credits & Duration)**：代码增删行数（`Δ +X -Y`）、实际 Credits 消费、总耗时与 API 耗时。
-- **Line 4 (Agents & Tool Activity)**：活动子代理、队列与完成任务状态，以及当前正在执行/本轮完成的工具调用频次聚合。
-- **智能裁剪**：若 Line 3/4 无有效数据自动隐藏，确保输出紧凑且严格 $\le 4$ 行。
-- **安全过滤**：所有外部字符串在输出前必须经过 `sanitizeTerminalText()`，剔除 ANSI CSI/OSC 转义序列、C0/C1 控制符以及 Unicode Bidi 欺骗字符。
+    Entry->>Host: process.exitCode = 0 (Natural Event Loop Drain)
+    deactivate Entry
+```
 
 ---
 
-## 3. 跨平台与零依赖设计
+## 5. Core Subsystems & Deep Mechanics
 
-1. **绝对零 npm 依赖**：纯基于 Node.js 18+ 原生 API 构建。
-2. **Windows 绝对路径 Shim**：生成 `.cmd` 启动脚本时直接烘焙当前安装环境的 `process.execPath` 绝对路径并转义 `%` 为 `%%`，完全免疫 Windows PATH 不一致或 GUI 宿主启动环境变量丢失问题。
-3. **无感异步更新检查**：使用 `spawn` + `unref()` 派生独立后台进程，网络 I/O 耗时完全从主渲染链路中剥离，HUD 渲染耗时不受任何网络波动影响。
+### 5.1 Reverse Sliding-Window Transcript Scanning (`transcript.js`)
+- **Problem**: Comprehensive telemetry (Prompt Cache hits, exact credit billing, tool names) is only recorded in the host's `transcript.jsonl`. However, transcript files can exceed hundreds of megabytes during long coding sessions.
+- **Scanning Algorithm**:
+  1. **Tail Seeking**: Opens the file descriptor and reads backwards from `EOF` in $16\text{KB} \sim 64\text{KB}$ sliding chunks (capped at $256\text{KB}$ total scan window).
+  2. **Straddle Line Reconstruction**: When a sliding chunk boundary cuts across a JSON line, the trailing fragment is buffered and prepended to the preceding chunk to assemble valid JSON.
+  3. **Turn Boundary Termination**: The scanner traverses backwards, aggregating API usage blocks until it encounters an entry with `role: 'user'`. This guarantees metrics reflect the **current turn aggregation**, not isolated burst steps.
+  4. **Field Priority Resolution**:
+     ```
+     Prompt Cache Hits = rawUsage.prompt_cache_hit_tokens
+                      || usage.inputTokensDetails[].cached_tokens
+                      || cache_read_input_tokens
+     ```
+
+### 5.2 Session Baseline Tracking & `/clear` Detection (`session-stats.js`)
+- **Problem**: When a user executes `/clear`, the host context window resets, but cumulative tokens or added lines in the raw payload may report non-monotonic drops or retain stale session history.
+- **State Machine**:
+  1. Persists logical session baselines in `~/.codebuddy/codebuddy-hud-session-state/<hash>.json`.
+  2. Detects a clear boundary if:
+     - The current `input_tokens` drops below $1\%$ of previous total input while cumulative total remains high;
+     - Current `session_id` changes for the same transcript path;
+     - Lines added/removed drop below previous baseline numbers.
+  3. Subtracts the established baseline from raw host stats to display accurate turn-relative diffs and elapsed durations.
+
+### 5.3 Incremental SHA-256 Checkpointing for Credits (`transcript.js`)
+- **Problem**: Summing full session credit costs across thousands of JSONL lines on every $300\text{ms}$ trigger causes severe CPU throttling.
+- **Checkpoint Algorithm**:
+  1. Hashes the transcript absolute path with SHA-256 to isolate state: `~/.codebuddy/codebuddy-hud-usage-state/<sha256>.json`.
+  2. Stores `{ offset: number, credits: number, inode: number, size: number }`.
+  3. On subsequent invocations, reads strictly from `offset` to `EOF` (sub-millisecond parsing).
+  4. **Rewrite & Truncation Guard**: If current `file.size < state.offset`, the state machine detects in-place rewrite or truncation, resets `offset = 0`, and seamlessly rebuilds the checkpoint.
+
+### 5.4 Background Update Stampede Prevention (`update-checker.js`)
+- **Vulnerability**: At $300\text{ms}$ invocation rates, an asynchronous HTTP fetch (taking $1\sim 3$ seconds) causes $10\sim 20$ concurrent Node background processes to spawn before the first check writes back to disk (**Process Stampede / Fork Bomb**).
+- **Pre-Locking Solution**:
+  ```javascript
+  // Persist placeholder lock before spawning to block concurrent triggers
+  writeUpdateStatus({
+    ...(currentStatus || {}),
+    lastCheck: Date.now(), // PRE-LOCK
+  });
+  const child = spawn(process.execPath, [scriptPath, '--run-check'], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  child.unref();
+  ```
+
+### 5.5 Multi-Layer Configuration & Theme Engine (`config.js`)
+- **Precedence Hierarchy**:
+  ```
+  Defaults (Built-in) 
+    → Built-in Theme Presets (ocean, emerald, cyberpunk, amber, monochrome)
+      → Global User Config (~/.codebuddy/codebuddy-hud.config.json)
+        → Project Local Config (./codebuddy-hud.config.json)
+          → Runtime CLI Arguments (--theme <name>)
+  ```
+- **Security Guard**: `deepMerge()` explicitly strips `__proto__`, `constructor`, and `prototype` keys with a maximum recursion depth cap of 64 to prevent Prototype Pollution attacks.
+
+### 5.6 4-Line Adaptive Layout & Pruning (`renderer.js`)
+- **Line 1 (Identity & Status)**: Model Display Name · Reasoning Effort Icon · Git Branch & Dirty (`*`) · Workspace Name · Permission Mode · Version Badge.
+- **Line 2 (Tokens & Context)**: Total Tokens (In/Out breakdown) · Progress Bar (`[███░░░░░░░]`) · Percentage Used · Turn Cache Hit Badge.
+- **Line 3 (Diff & Cost & Latency)**: `Δ +Added -Removed` · Actual Credits · Total Duration · API Duration. (Omitted if all are zero).
+- **Line 4 (Agents & Tool Activity)**: Active Agents · Task Queue · Completed Count · Aggregated Tool Call Badges (`✓ Edit ×3`). (Omitted if empty).
+
+---
+
+## 6. Security Threat Model & Terminal Defense
+
+`codebuddy-hud` implements defensive sanitization on **every** dynamic string before output:
+
+| Threat Vector | Attack Payload Example | Defense Mechanism (`runtime/sanitize.js`) |
+| :--- | :--- | :--- |
+| **ANSI CSI Escape Injection** | `\x1b[2J\x1b[H` (Clear screen exploit) | Strips all CSI sequences matching `/\x1b\[[0-?]*[ -/]*[@-~]/g`. |
+| **OSC Escape Payloads** | `\x1b]52;c;...\x07` (Clipboard hijack) | Strips all OSC sequences matching `/\x1b\][^\x07]*?(?:\x07|\x1b\\|$)/g`. |
+| **Bidi Text Disguise** | `\u202E` (Right-to-Left Override) | Removes bidirectional Trojan characters (`U+202A` through `U+202E`, `U+2066`-`U+2069`). |
+| **Terminal Control Chars** | `\x00-\x08`, `\x0B-\x1F`, `\x7F` | Strips ASCII C0/C1 control codes and NUL bytes. |
+| **Oversized String Floods** | 50,000 char git branch name | Hard length truncation to safe viewport boundaries (e.g. 64/128 chars). |
+
+---
+
+## 7. System Failure Modes & Degradation Matrix
+
+| Failure Event | Root Cause | System Degradation Behavior | Exit Code |
+| :--- | :--- | :--- | :---: |
+| **Empty Stdin** | Windows host timing quirk / early hook trigger | Falls back to mock or empty payload gracefully; renders minimal line. | `0` |
+| **Stdin Hang** | Host pipe remains open without sending EOF | $800\text{ms}$ timeout timer fires, forcibly closes stdin and renders collected input. | `0` |
+| **EPIPE Error** | Host kills statusline process while stdout writing | `process.stdout.on('error', () => {})` swallows error cleanly. | `0` |
+| **Missing Transcript** | First turn / remote headless session | Omits Line 4 tool activity and falls back to payload-supplied token counts. | `0` |
+| **Corrupt JSONL / State** | Process killed mid-write | Checkpoint discarded; resets byte offset to 0 and rebuilds from start. | `0` |
+| **Readonly Filesystem** | Permission restricted container | State writes fail silently inside try/catch; telemetry computed purely in memory. | `0` |
+| **Git Timeout** | Huge mono-repo / NFS lag | 200ms timeout threshold aborts git probe and renders without branch tag. | `0` |
+| **Network Failure** | Offline / DNS failure in update check | Preserves existing update status, updates `lastCheck` timestamp, and exits silently. | `0` |
+
+---
+
+## 8. Cross-Platform & Zero-Dependency Guarantees
+
+1. **Windows `.cmd` Shim Path Baking**:
+   - `statusline-installer.js` bakes the exact `process.execPath` into `codebuddy-hud.cmd` during `--setup`.
+   - Batch percent characters (`%`) in paths are automatically escaped as `%%` to avoid `cmd.exe` variable substitution corruption.
+2. **Terminal UTF-8 Auto-Detection**:
+   - On Windows, queries `chcp.com` and caches the result (`65001`) in `codebuddy-hud-cache-state.json`.
+   - Seamlessly falls back to ASCII glyphs (`#`, `-`, `|`, `[A]`, `[Q]`, `[D]`) when UTF-8 / Unicode is unsupported.
+3. **Natural Event Loop Drain**:
+   - Eliminates abrupt `process.exit()` in rendering path. Releases all active `stdin` handles, timer handles, and let libuv naturally exit to prevent stdout buffer truncation.
