@@ -158,7 +158,7 @@ function spawnBackgroundUpdateCheck() {
 
 if (require.main === module) {
   if (process.argv.includes('--run-check')) {
-    checkForUpdates()
+    checkForUpdates({ force: true })
       .then(() => process.exit(0))
       .catch(() => process.exit(0));
   } else {
