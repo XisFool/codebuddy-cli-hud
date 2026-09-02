@@ -1,4 +1,4 @@
-# codebuddy-cli-hud — AGENTS.md
+# CodeBuddy HUD (codebuddy-hud) — AGENTS.md
 
 CodeBuddy Code 的 statusLine HUD：宿主每 ~300ms 把会话 JSON 从 stdin 喂进来，
 HUD 打印 ≤4 行 ANSI 看板。CommonJS，Node >=18。

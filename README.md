@@ -1,4 +1,4 @@
-# codebuddy-cli-hud
+# CodeBuddy HUD
 
 [![Node.js >=18](https://img.shields.io/badge/Node.js-%3E%3D18-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![npm dependencies](https://img.shields.io/badge/npm%20dependencies-0-2ea44f)](#安装)
@@ -8,7 +8,7 @@
 >
 > 不需要 `npm install`，不发送网络请求，也不会因为 HUD 出错而中断 CodeBuddy。
 
-[GitHub 项目](https://github.com/XisFool/codebuddy-cli-hud) · [安装](#安装) · [主题换肤](#主题换肤) · [验证](#验证) · [诊断](#诊断) · [卸载](#卸载)
+[GitHub 项目](https://github.com/XisFool/codebuddy-hud) · [安装](#安装) · [主题换肤](#主题换肤) · [验证](#验证) · [诊断](#诊断) · [卸载](#卸载)
 
 ---
 
@@ -42,8 +42,8 @@ Token 250.1k (in: 249k · out: 1.1k)  │  249k/1M [███░░░░░░�
 ### Windows PowerShell 或 cmd.exe
 
 ```powershell
-git clone https://github.com/XisFool/codebuddy-cli-hud.git
-cd codebuddy-cli-hud
+git clone https://github.com/XisFool/codebuddy-hud.git
+cd codebuddy-hud
 node runtime/bin/codebuddy-hud.js --setup
 npm link  # 推荐：注册全局 codebuddy-hud 命令，方便在任意目录下换肤
 ```
@@ -51,8 +51,8 @@ npm link  # 推荐：注册全局 codebuddy-hud 命令，方便在任意目录�
 ### Linux、macOS 与 WSL
 
 ```sh
-git clone https://github.com/XisFool/codebuddy-cli-hud.git
-cd codebuddy-cli-hud
+git clone https://github.com/XisFool/codebuddy-hud.git
+cd codebuddy-hud
 node runtime/bin/codebuddy-hud.js --setup
 npm link  # 推荐：注册全局 codebuddy-hud 命令，方便在任意目录下换肤
 ```
