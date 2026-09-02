@@ -56,6 +56,16 @@ function setup(options) {
     // file doesn't exist or is invalid — start fresh
   }
 
+  if (opts.theme) {
+    try {
+      const { saveUserTheme } = require('./theme-selector');
+      saveUserTheme(opts.theme);
+    } catch {
+      // ignore
+    }
+  }
+
+
   // Backup existing statusLine
   if (settings.statusLine) {
     const backupPath = settingsPath + '.bak.codebuddy-hud';

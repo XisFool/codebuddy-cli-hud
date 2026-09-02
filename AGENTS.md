@@ -19,24 +19,26 @@ HUD 打印 ≤4 行 ANSI 看板。CommonJS，Node >=18。
 - **所有外部字符串必须过 `sanitizeTerminalText()`**（防 transcript 注入 ANSI/OSC）。
   strip 范围含 C1（U+0080-U+009F）与 bidi 控制符（U+202E 等）——JSON.stringify 不转义
   这两个区段，此前会隐形穿透。effort 标签走 `resolveEffortLevel` 白名单
-  （low/medium/high/max）+ 渲染层 sanitize 双保险：`config.defaultEffortLevel` 来自
+  （low/medium/high/xhigh/max/ultracode）+ 渲染层 sanitize 双保险：`config.defaultEffortLevel` 来自
   会话 cwd 下任意仓库的 `codebuddy-hud.config.json`，属不受信输入（2026-09-01 修复）
 
 ## 架构（入口 → 数据流）
 
 ```
-runtime/bin/codebuddy-hud.js   入口；--setup/--status/--uninstall
+runtime/bin/codebuddy-hud.js   入口；--setup/--status/--uninstall/--theme
   ├ parser.js                  从 payload 提取 token/diff/cost/agent
-  ├ config.js                  默认 + 随包 + 项目级三方 deepMerge
+  ├ config.js                  内置 THEME_PRESETS、Dark/Light 模式解析与 deepMerge
+  ├ theme-selector.js          TTY 实时所见即所得交互主题选择器
   ├ renderer.js                4 行组装
-  │ ├ renderer/format.js       颜色 / 进度条 / cache 命中率
+  │ ├ renderer/format.js       调色板 / 进度条 / cache 命中率
   │ ├ renderer/diff-render.js
-  │ └ renderer/agents-render.js
-  ├ transcript.js              尾读 transcript（最近工具活动）
+  │ └ renderer/agents-render.js Line 4 工具活动与频次聚合
+  ├ transcript.js              尾读 transcript（本轮工具频次聚合 + 本轮 usage 聚合）
   ├ git.js / model-info.js / encoding.js / sanitize.js / paths.js
   └ statusline-installer.js    --setup 写 settings.json
 tests/fixtures/*.json          4 个 payload fixture
 scripts/verify-display.js      E2E
+
 ```
 
 ## 改完后怎么验（必读）
@@ -173,5 +175,6 @@ renderer 的 cache badge 优先用本轮聚合；credits 则使用整个 transcr
 
 ## 风格
 
-- 提交前先跑 `node --test "tests/unit/*.test.mjs"`；254 个用例应全绿
+- 提交前先跑 `node --test "tests/unit/*.test.mjs"`；297 个用例应全绿
 - 函数 / 文件改动若偏离上述任一硬约束，必须在 PR 描述里点名并给出依据
+

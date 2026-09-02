@@ -121,7 +121,9 @@ function selectGlyphs(useNerdFonts, unicodeSupported) {
         low: '\u25CB ',
         medium: '\u25D4 ',
         high: '\u25D1 ',
+        xhigh: '\u25D5 ',
         max: '\u25CF ',
+        ultracode: '\u26A1 ',
       },
     };
   }
@@ -136,7 +138,9 @@ function selectGlyphs(useNerdFonts, unicodeSupported) {
         low: '\u25CB ',
         medium: '\u25D4 ',
         high: '\u25D1 ',
+        xhigh: '\u25D5 ',
         max: '\u25CF ',
+        ultracode: '\u26A1 ',
       },
     };
   }
@@ -150,7 +154,9 @@ function selectGlyphs(useNerdFonts, unicodeSupported) {
       low: '(low) ',
       medium: '(med) ',
       high: '(high) ',
+      xhigh: '(xhigh) ',
       max: '(max) ',
+      ultracode: '(ultra) ',
     },
   };
 }

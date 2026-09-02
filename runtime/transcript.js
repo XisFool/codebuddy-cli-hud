@@ -642,8 +642,126 @@ function getRecentToolActivity(transcriptPath, opts) {
   }
 }
 
+function getTurnToolActivity(transcriptPath, opts) {
+  const options = opts || {};
+  if (!transcriptPath || typeof transcriptPath !== 'string' || transcriptPath.includes('\0')) return null;
+
+  let resolved = transcriptPath;
+  if (!path.isAbsolute(resolved) && typeof options.cwd === 'string' && options.cwd) {
+    resolved = path.resolve(options.cwd, resolved);
+  }
+
+  const tailBytes = Number.isFinite(options.tailBytes) && options.tailBytes > 0
+    ? Math.floor(options.tailBytes)
+    : DEFAULT_TAIL_BYTES;
+
+  let fd = null;
+  try {
+    fd = fs.openSync(resolved, 'r');
+    const size = fs.fstatSync(fd).size;
+    if (size <= 0) return null;
+
+    const calls = [];
+    const resultIds = new Set();
+    let end = size;
+    let totalRead = 0;
+    let carry = '';
+    let scanned = 0;
+    let hitUserBoundary = false;
+
+    while (end > 0 && totalRead < MAX_TOTAL_BYTES && scanned < MAX_TURN_SCAN_LINES && !hitUserBoundary) {
+      const len = Math.min(tailBytes, end);
+      const start = end - len;
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, start);
+      totalRead += len;
+
+      const combined = buf.toString('utf8') + carry;
+      carry = '';
+
+      let text;
+      if (start > 0) {
+        const nl = combined.indexOf('\n');
+        if (nl === -1) {
+          carry = combined;
+          end = start;
+          continue;
+        }
+        carry = combined.slice(0, nl);
+        text = combined.slice(nl + 1);
+      } else {
+        text = combined;
+      }
+
+      const lines = text.split('\n');
+      for (let i = lines.length - 1; i >= 0 && scanned < MAX_TURN_SCAN_LINES; i--) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        scanned++;
+        let entry;
+        try {
+          entry = JSON.parse(line);
+        } catch {
+          continue;
+        }
+
+        if ((calls.length > 0 || resultIds.size > 0) &&
+            ((entry.type === 'message' && entry.role === 'user') || (entry.type === 'user'))) {
+          hitUserBoundary = true;
+          break;
+        }
+
+        scanEntry(entry, calls, resultIds);
+      }
+      end = start;
+    }
+
+    if (calls.length === 0) return null;
+
+    let active = null;
+    const completedMap = new Map();
+    let totalCompleted = 0;
+
+    for (const call of calls) {
+      const isCompleted = resultIds.has(call.id);
+      const toolName = sanitizeTerminalText(String(call.name || 'tool'), 16);
+      if (!isCompleted) {
+        if (!active) {
+          const args = parseArguments(call.arguments);
+          active = {
+            tool: toolName,
+            detail: sanitizeTerminalText(extractDetail(args), 24),
+          };
+        }
+      } else {
+        completedMap.set(toolName, (completedMap.get(toolName) || 0) + 1);
+        totalCompleted++;
+      }
+    }
+
+    const completed = Array.from(completedMap.entries())
+      .map(([tool, count]) => ({ tool, count }))
+      .sort((a, b) => b.count - a.count);
+
+    if (!active && completed.length === 0) return null;
+
+    return {
+      active,
+      completed,
+      totalCompleted,
+    };
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch { /* already closed */ }
+    }
+  }
+}
+
 module.exports = {
   getRecentToolActivity,
+  getTurnToolActivity,
   getRecentUsageMetrics,
   getTurnUsageMetrics,
   getSessionUsageMetrics,
@@ -653,3 +771,4 @@ module.exports = {
   MAX_SCAN_LINES,
   MAX_TURN_SCAN_LINES,
 };
+

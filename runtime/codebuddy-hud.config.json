@@ -1,15 +1,6 @@
 {
-  "theme": {
-    "primary": "cyan",
-    "secondary": "gray",
-    "warning": "yellow",
-    "critical": "red",
-    "accent": "cyan",
-    "diffAdd": "green",
-    "diffRemove": "red",
-    "model": "cyan",
-    "gitBranch": "cyan"
-  },
+  "theme": "ocean",
+  "themeMode": "auto",
   "display": {
     "showTokenBar": true,
     "showDiffStats": true,

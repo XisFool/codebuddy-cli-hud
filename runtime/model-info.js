@@ -50,12 +50,23 @@ function inferEffortFromModel(cbData) {
 }
 
 /**
- * Resolve model thinking/effort level (low, medium, high, max).
+ * Resolve model thinking/effort level (low, medium, high, xhigh, max, ultracode).
  * @param {object} cbData
  * @param {object} [config]
  * @returns {string|null}
  */
-const VALID_EFFORT_LEVELS = ['low', 'medium', 'high', 'max'];
+const VALID_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'];
+
+const EFFORT_ALIASES = {
+  med: 'medium',
+  'extra-high': 'xhigh',
+  extra_high: 'xhigh',
+  'x-high': 'xhigh',
+  maximum: 'max',
+  ultra: 'ultracode',
+  'ultra-code': 'ultracode',
+  ultra_code: 'ultracode',
+};
 
 // Whitelist exit. The effort label reaches stdout essentially verbatim, and
 // one of its sources — config.defaultEffortLevel — comes from a
@@ -65,7 +76,9 @@ const VALID_EFFORT_LEVELS = ['low', 'medium', 'high', 'max'];
 function normalizeEffort(value) {
   if (typeof value !== 'string') return null;
   const v = value.trim().toLowerCase();
-  return VALID_EFFORT_LEVELS.includes(v) ? v : null;
+  if (VALID_EFFORT_LEVELS.includes(v)) return v;
+  if (EFFORT_ALIASES[v]) return EFFORT_ALIASES[v];
+  return null;
 }
 
 function resolveEffortLevel(cbData, config) {

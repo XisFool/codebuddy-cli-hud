@@ -9,7 +9,7 @@ const { selectGlyphs, supportsUnicode } = require('./encoding');
 const { extractTokenData, extractDiffStats, extractCostData, extractAgentData } = require('./parser');
 const { getGitStatus } = require('./git');
 const { resolveEffortLevel, resolveCreditSpend } = require('./model-info');
-const { getRecentToolActivity, getTurnUsageMetrics, getSessionUsageMetrics } = require('./transcript');
+const { getRecentToolActivity, getTurnToolActivity, getTurnUsageMetrics, getSessionUsageMetrics } = require('./transcript');
 const { getLogicalSessionCostData } = require('./session-stats');
 
 function renderHUD(cbData, config) {
@@ -23,6 +23,11 @@ function renderHUD(cbData, config) {
   const divider = `  \x1b[90m${glyphs.vbar}\x1b[0m  `;
   const lines = [];
   const tokenData = extractTokenData(cbData);
+
+  const themePrimary = (config.theme && config.theme.primary) || 'cyan';
+  const themeAccent = (config.theme && config.theme.accent) || themePrimary;
+  const themeModel = (config.theme && config.theme.model) || themePrimary;
+  const themeBranch = (config.theme && config.theme.gitBranch) || themePrimary;
 
   // The tail scan supplies the current-turn cache badge. Session credits use a
   // separate incremental offset scan and do not reread already-counted bytes.
@@ -47,14 +52,21 @@ function renderHUD(cbData, config) {
   // Belt-and-braces on top of the whitelist in resolveEffortLevel: hard
   // constraint 5 says every external string is sanitized before it reaches
   // stdout, and the effort label is the last unsanitized payload-derived value.
-  const effortLabel = sanitizeTerminalText(effortLevel || '--', 8);
+  const effortLabel = sanitizeTerminalText(effortLevel || '--', 12);
   const effortIcon = (effortLevel && glyphs.effortIcons && glyphs.effortIcons[effortLevel])
     ? glyphs.effortIcons[effortLevel]
     : (glyphs.effortIcons && glyphs.effortIcons.medium) || '';
-  const effortColorMap = { low: 'gray', medium: 'blue', high: 'yellow', max: 'magenta' };
+  const effortColorMap = {
+    low: 'gray',
+    medium: 'blue',
+    high: 'yellow',
+    xhigh: 'magenta',
+    max: 'red',
+    ultracode: 'cyan',
+  };
   const effortColor = effortColorMap[effortLevel] || 'gray';
 
-  let modelSegment = bold(color(modelName, 'cyan'));
+  let modelSegment = bold(color(modelName, themeModel));
   modelSegment += ` ${color(`${effortIcon}${effortLabel}`, effortColor)}`;
   line1Parts.push(modelSegment);
 
@@ -63,13 +75,13 @@ function renderHUD(cbData, config) {
     if (gitStatus && gitStatus.branch) {
       const cleanBranch = sanitizeTerminalText(gitStatus.branch, 30);
       const dirtyMark = gitStatus.dirty ? color('*', 'yellow') : '';
-      line1Parts.push(`${color(cleanBranch, 'cyan')}${dirtyMark}`);
+      line1Parts.push(`${color(cleanBranch, themeBranch)}${dirtyMark}`);
     }
   }
 
   if (config.display.showCurrentDir !== false) {
     const dirName = sanitizeTerminalText(path.basename(cwd), 20);
-    line1Parts.push(color(dirName, 'blue'));
+    line1Parts.push(color(dirName, themeAccent));
   }
 
   if (config.display.showPermissionMode !== false && cbData.permission_mode) {
@@ -88,14 +100,14 @@ function renderHUD(cbData, config) {
   if (tokenData && config.display.showTokenBar !== false) {
     const line2Parts = [];
     const totalTokens = tokenData.inTokens + tokenData.outTokens;
-    const dot = dim(` ${glyphs.dot} `);
+    const dot = color(` ${glyphs.dot} `, 'gray');
 
     const tokenDetail = [
-      `${dim('in: ')}${color(formatTokens(tokenData.inTokens), 'cyan')}`,
-      `${dim('out: ')}${color(formatTokens(tokenData.outTokens), 'cyan')}`,
+      `${color('in: ', 'gray')}${color(formatTokens(tokenData.inTokens), themeAccent)}`,
+      `${color('out: ', 'gray')}${color(formatTokens(tokenData.outTokens), themeAccent)}`,
     ];
 
-    const tokenStr = `${color('Token ', 'cyan')}${color(formatTokens(totalTokens), 'cyan')} ${dim('(')}${tokenDetail.join(dot)}${dim(')')}`;
+    const tokenStr = `${bold(color('Token ', themePrimary))}${bold(color(formatTokens(totalTokens), themePrimary))} ${color('(', 'gray')}${tokenDetail.join(dot)}${color(')', 'gray')}`;
     line2Parts.push(tokenStr);
 
     const barWidth = config.display.progressBarWidth || 10;
@@ -104,7 +116,7 @@ function renderHUD(cbData, config) {
     // (current_usage based). Previously we used totalInput (session-cumulative)
     // while the bar/percent used current_usage, producing wildly inconsistent
     // displays like `1.1M/1M [█░░░░░░░░░]6%`.
-    const ctxLabel = `${color(formatTokens(tokenData.inTokens), 'cyan')}${dim('/')}${color(formatTokens(tokenData.ctxSize), 'cyan')}`;
+    const ctxLabel = `${color(formatTokens(tokenData.inTokens), themeAccent)}${color('/', 'gray')}${color(formatTokens(tokenData.ctxSize), themePrimary)}`;
 
     let pctColor = 'green';
     const warnPct = ((config.thresholds && config.thresholds.warning) || 0.7) * 100;
@@ -113,7 +125,7 @@ function renderHUD(cbData, config) {
     else if (tokenData.ctxPercent >= warnPct) pctColor = 'yellow';
 
     const ctxPercentStr = color(`${Math.round(tokenData.ctxPercent)}%`, pctColor);
-    line2Parts.push(`${ctxLabel} ${dim('[')}${bar}${dim(']')} ${ctxPercentStr}`);
+    line2Parts.push(`${ctxLabel} ${color('[', 'gray')}${bar}${color(']', 'gray')} ${ctxPercentStr}`);
 
     if (config.display.showCacheHitRate !== false) {
       // Real cache telemetry lives in the transcript's providerData, NOT in the
@@ -152,19 +164,19 @@ function renderHUD(cbData, config) {
     totalDurationMs: sessionCostData.totalDurationMs,
     apiDurationMs: sessionCostData.apiDurationMs,
   } : null;
-  const totalCostUsd = costData ? costData.totalCostUsd : 0;
   const transcriptCredits = sessionUsage && Number.isFinite(sessionUsage.credits) ? sessionUsage.credits : null;
   const creditSpend = transcriptCredits === null ? resolveCreditSpend(cbData) : transcriptCredits;
-  const line3 = renderDiffSegment(diffStats, costData, config, glyphs, 'en', creditSpend);
+  const line3 = renderDiffSegment(diffStats, costData, config, glyphs, creditSpend);
   if (line3) lines.push(line3);
 
   // Line 4: Subagent/Task Status + Recent Tool Activity
   const agentData = extractAgentData(cbData);
   const line4Parts = [];
-  line4Parts.push(renderAgentLine(agentData, config, glyphs, 'en'));
+  line4Parts.push(renderAgentLine(agentData, config, glyphs));
   if (config.display.showToolActivity !== false) {
     const tailBytes = config.display.toolActivityTailBytes;
-    const activity = getRecentToolActivity(cbData.transcript_path, { cwd, tailBytes });
+    const activity = getTurnToolActivity(cbData.transcript_path, { cwd, tailBytes })
+      || getRecentToolActivity(cbData.transcript_path, { cwd, tailBytes });
     line4Parts.push(renderToolActivity(activity, glyphs));
   }
   const line4 = line4Parts.filter(Boolean).join(divider);

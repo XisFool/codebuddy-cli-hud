@@ -10,8 +10,9 @@ const { getErrorLogPath } = require('../paths');
 // Leave headroom for Node startup and the final stdout flush. Waiting the full
 // 1500ms for a host that never closes stdin would violate the end-to-end time
 // budget before rendering even begins.
-const TIMEOUT_MS = 1000;
+const TIMEOUT_MS = 800;
 const LOG_MAX_BYTES = 1024 * 1024;
+
 
 // A stdout pipe that the host closed early (killed statusLine, `head -c 1`, …)
 // raises an async 'error' on process.stdout. Unhandled, it crashes the process
@@ -71,13 +72,55 @@ function handleRender(rawStdin) {
 // with a non-zero exit (a bare throw here used to escape as exit code 1).
 const args = process.argv.slice(2);
 if (args.includes('--setup')) {
-  try {
-    require('../statusline-installer').setup();
-  } catch (err) {
-    logError(err);
-    console.error('setup failed (see codebuddy-hud-error.log)');
-  }
-  process.exitCode = 0;
+  (async () => {
+    try {
+      let selectedTheme = null;
+      const themeIdx = args.indexOf('--theme');
+      if (themeIdx !== -1 && args[themeIdx + 1] && !args[themeIdx + 1].startsWith('--')) {
+        selectedTheme = args[themeIdx + 1];
+      } else if (process.stdin.isTTY && process.stdout.isTTY) {
+        const { selectThemeInteractive } = require('../theme-selector');
+        selectedTheme = await selectThemeInteractive();
+      }
+      require('../statusline-installer').setup(selectedTheme ? { theme: selectedTheme } : undefined);
+    } catch (err) {
+      logError(err);
+      console.error('setup failed (see codebuddy-hud-error.log)');
+    }
+    process.exitCode = 0;
+  })();
+} else if (args.includes('--theme')) {
+  (async () => {
+    try {
+      const { THEME_PRESETS } = require('../config');
+      const { saveUserTheme, printThemesList, selectThemeInteractive } = require('../theme-selector');
+      const themeIdx = args.indexOf('--theme');
+      const themeArg = (themeIdx !== -1 && args[themeIdx + 1] && !args[themeIdx + 1].startsWith('--')) ? args[themeIdx + 1] : null;
+
+      if (themeArg === 'list' || themeArg === '--help' || themeArg === '-h') {
+        printThemesList();
+      } else if (themeArg) {
+        if (THEME_PRESETS[themeArg]) {
+          const savedPath = saveUserTheme(themeArg);
+          console.log(`\x1b[32m✔\x1b[0m HUD theme set to '\x1b[1m${themeArg}\x1b[0m' (saved to ${savedPath})`);
+        } else {
+          console.error(`Unknown theme: "${themeArg}". Available themes: ${Object.keys(THEME_PRESETS).join(', ')}`);
+        }
+      } else if (process.stdin.isTTY && process.stdout.isTTY) {
+        const selected = await selectThemeInteractive();
+        if (selected) {
+          const savedPath = saveUserTheme(selected);
+          console.log(`\x1b[32m✔\x1b[0m HUD theme set to '\x1b[1m${selected}\x1b[0m' (saved to ${savedPath})\n`);
+        }
+      } else {
+        printThemesList();
+      }
+    } catch (err) {
+      logError(err);
+      console.error('theme configuration failed (see codebuddy-hud-error.log)');
+    }
+    process.exitCode = 0;
+  })();
 } else if (args.includes('--uninstall')) {
   try {
     require('../uninstall').uninstall();

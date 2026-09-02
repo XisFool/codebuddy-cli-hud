@@ -8,6 +8,7 @@ const ANSI_COLORS = {
   cyan: '\x1b[36m',
   green: '\x1b[32m',
   red: '\x1b[31m',
+  white: '\x1b[37m',
 };
 
 const RESET = '\x1b[0m';
@@ -82,6 +83,11 @@ function createProgressBar(percent, width, thresholds, glyphs) {
 function getThemeColor(config, key, fallback) {
   const name = (config && config.theme && config.theme[key]) || fallback;
   return ANSI_COLORS[name] || ANSI_COLORS[fallback] || '';
+}
+
+function themeColor(config, key, text, fallback) {
+  const name = (config && config.theme && config.theme[key]) || fallback;
+  return color(text, name);
 }
 
 // Distinguish "field missing" from "field is 0". Returns null for missing,
@@ -232,8 +238,9 @@ function formatTurnCacheBadge(metrics, label, isCompact, thresholds) {
 
 module.exports = {
   ANSI_COLORS, RESET, BOLD, DIM,
-  color, bold, dim,
+  color, bold, dim, themeColor,
   formatTokens, formatDurationMs, createProgressBar, getThemeColor,
   calculateTurnCacheMetrics, formatTurnCacheBadge, normalizeTokenCount,
   metricsFromPromptCache, sumCachedTokens,
 };
+

@@ -2,14 +2,16 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getSettingsPath, getCacheStatePath, getCreditStatePath, getTranscriptUsageStateDir, getSessionStatsStateDir } = require('./paths');
+const { getSettingsPath, getUserConfigPath, getCacheStatePath, getCreditStatePath, getTranscriptUsageStateDir, getSessionStatsStateDir } = require('./paths');
 const { sanitizeTerminalText } = require('./sanitize');
 
 function uninstall(options) {
   const opts = options || {};
   const settingsPath = opts.settingsPath || getSettingsPath();
   const backupPath = settingsPath + '.bak.codebuddy-hud';
+  const userConfigPath = getUserConfigPath();
   const cachePath = getCacheStatePath();
+
   const creditPath = getCreditStatePath();
   const usageStateDir = getTranscriptUsageStateDir();
   const sessionStatsStateDir = getSessionStatsStateDir();
@@ -87,6 +89,16 @@ function uninstall(options) {
   } catch {
     // ignore
   }
+
+  try {
+    if (fs.existsSync(userConfigPath)) {
+      fs.unlinkSync(userConfigPath);
+      cleaned.push(`Removed user configuration: ${sanitizeTerminalText(userConfigPath, 512)}`);
+    }
+  } catch {
+    // ignore
+  }
+
 
   if (cleaned.length === 0) {
     console.log('Nothing to uninstall.');

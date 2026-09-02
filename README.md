@@ -8,16 +8,17 @@
 >
 > 不需要 `npm install`，不发送网络请求，也不会因为 HUD 出错而中断 CodeBuddy。
 
-[GitHub 项目](https://github.com/XisFool/codebuddy-cli-hud) · [安装](#安装) · [验证](#验证) · [诊断](#诊断) · [卸载](#卸载)
+[GitHub 项目](https://github.com/XisFool/codebuddy-cli-hud) · [安装](#安装) · [主题换肤](#主题换肤) · [验证](#验证) · [诊断](#诊断) · [卸载](#卸载)
 
 ---
 
 ## 显示效果
 
 ```text
-DeepSeek V4 Flash  max  |  main*  |  my-project  |  default
-Token 250.1k (in: 249k · out: 1.1k)  |  249k/1M [███░░░░░░░] 25%  |  cache 96.8%
-Δ +1.7k -161  |  82.04 credits  |  ⏱ 2h47m (API: 1h23m)
+DeepSeek V4 Flash ⚡max  │  main*  │  my-project  │  default
+Token 250.1k (in: 249k · out: 1.1k)  │  249k/1M [███░░░░░░░] 25%  │  cache 96.8%
+Δ +1.7k -161  │  82.04 credits  │  ⏱ 2h47m (API: 1h23m)
+◐ Edit: parser.js  │  ✓ Read ×3  ✓ Grep ×2
 ```
 
 ### 四行布局
@@ -25,9 +26,10 @@ Token 250.1k (in: 249k · out: 1.1k)  |  249k/1M [███░░░░░░░
 - **第 1 行：当前环境**。模型、推理强度、Git 分支、项目目录和权限模式。
 - **第 2 行：上下文资源**。本次上下文的输入/输出 Token、上下文进度和当前轮次缓存命中率。
 - **第 3 行：会话进度**。代码新增/删除、当前会话 Credits、总耗时与 API 耗时。
-- **第 4 行：正在做什么（按需出现）**。宿主提供子代理、任务或工具活动时，显示活跃数量、任务进度和最近工具调用。
+- **第 4 行：正在做什么（按需出现）**。宿主提供子代理、任务或工具活动时，置前高亮正在执行的工具（如 `◐ Edit: parser.js`），并聚合展示本轮已完成工具频次（如 `✓ Read ×3  ✓ Grep ×2`）。
 
 没有对应数据的行或片段会自动隐藏。HUD 最多输出 4 行。
+
 
 支持 Unicode 的终端会显示 `Δ`、`█` 与暗灰 `░` 进度条；不支持时自动使用 `[D]`、`#`、`-` 等 ASCII 回退，不会显示乱码。Markdown 代码块不保留 ANSI 颜色，实际终端中的填充部分会按阈值显示绿色、黄色或红色。
 
@@ -43,6 +45,7 @@ Token 250.1k (in: 249k · out: 1.1k)  |  249k/1M [███░░░░░░░
 git clone https://github.com/XisFool/codebuddy-cli-hud.git
 cd codebuddy-cli-hud
 node runtime/bin/codebuddy-hud.js --setup
+npm link  # 推荐：注册全局 codebuddy-hud 命令，方便在任意目录下换肤
 ```
 
 ### Linux、macOS 与 WSL
@@ -51,6 +54,7 @@ node runtime/bin/codebuddy-hud.js --setup
 git clone https://github.com/XisFool/codebuddy-cli-hud.git
 cd codebuddy-cli-hud
 node runtime/bin/codebuddy-hud.js --setup
+npm link  # 推荐：注册全局 codebuddy-hud 命令，方便在任意目录下换肤
 ```
 
 安装器会：
@@ -93,6 +97,42 @@ cat "$HOME/.codebuddy/settings.json"
 | Linux / macOS / WSL | `$HOME/.codebuddy/settings.json` |
 
 settings 会保存安装时的仓库和 Node 绝对路径。因此仓库被移动、删除，或者 Node 安装路径变化后，只需回到仓库重新执行 `--setup`。
+
+---
+
+## 主题换肤
+
+`codebuddy-cli-hud` 内置 5 套经典 ANSI 主题，支持暗/亮色自适应与全局/项目级配置：
+
+| 主题名称 | 风格定位 | 主色调 |
+| --- | --- | --- |
+| `ocean`（默认） | 深海青蓝 | 青蓝科技风，高可读性 |
+| `emerald` | 翡翠绿 | 清新护眼，自然舒适 |
+| `cyberpunk` | 赛博朋克 | 炫酷粉紫 + 荧光青 |
+| `amber` | 琥珀金 | 沉稳金黄，复古终端 |
+| `monochrome` | 黑白极简 | 经典终端灰白 |
+
+### 交互式“所见即所得”实时预览
+
+在任意终端运行以下命令，使用方向键 `↑` / `↓` 移动光标，屏幕下方将**实时动态渲染**出该主题的真实 ANSI 彩色看板效果，按 `Enter` 即可一键保存：
+
+```bash
+codebuddy-hud --theme
+```
+
+### 命令行快速切换
+
+```bash
+# 切换为赛博朋克主题
+codebuddy-hud --theme cyberpunk
+
+# 查看所有主题列表与当前激活主题
+codebuddy-hud --theme list
+```
+
+### 暗/亮色自适应
+
+HUD 会自动感知 CodeBuddy 全局主题配置与终端背景环境变量（`COLORFGBG`）。在浅色/白底终端下，HUD 会自动启用高对比度深色阶，杜绝文本看不清问题。
 
 ---
 
@@ -142,7 +182,7 @@ HUD 会静默降级并保持 CodeBuddy 正常运行。若要完成安装或保�
 node runtime/bin/codebuddy-hud.js --uninstall
 ```
 
-卸载器会恢复首次安装前备份的 `settings.json`。没有备份时，它只删除本项目写入的 statusLine，并清理 HUD 本地缓存、Credits checkpoint 和会话统计基线。Windows 同时移除本机生成的 `.cmd` shim。
+卸载器会恢复首次安装前备份的 `settings.json`。没有备份时，它只删除本项目写入的 statusLine，并清理 HUD 本地缓存、用户主题配置、Credits checkpoint 和会话统计基线。Windows 同时移除本机生成的 `.cmd` shim。
 
 ---
 
@@ -152,6 +192,8 @@ node runtime/bin/codebuddy-hud.js --uninstall
 
 ```json
 {
+  "theme": "cyberpunk",
+  "themeMode": "auto",
   "display": {
     "showToolActivity": true,
     "showCacheHitRate": true,
@@ -163,16 +205,19 @@ node runtime/bin/codebuddy-hud.js --uninstall
 
 | 配置 | 作用 |
 | --- | --- |
+| `theme` | 主题名称（`"ocean"`、`"emerald"`、`"cyberpunk"`、`"amber"`、`"monochrome"`）或自定义调色对象。 |
+| `themeMode` | 模式自适应（`"auto"`、`"dark"`、`"light"`）。 |
 | `display.showTokenBar` | 显示或隐藏 Token 与上下文进度条。 |
 | `display.showCacheHitRate` | 显示或隐藏缓存命中率。 |
 | `display.showDiffStats` | 显示或隐藏代码变更统计。 |
 | `display.showCost` | 显示或隐藏 Credits。 |
 | `display.showDuration` | 显示或隐藏总耗时与 API 耗时。 |
-| `display.showToolActivity` | 显示或隐藏最近工具活动。 |
+| `display.showToolActivity` | 显示或隐藏最近工具活动与聚合频次。 |
 | `display.unicode` | `"auto"`、`true` 或 `false`。 |
 | `display.useNerdFonts` | 设为 `true` 时使用 Nerd Fonts 图标。 |
 
 无论怎样配置，HUD 都不会超过 4 行。
+
 
 ---
 

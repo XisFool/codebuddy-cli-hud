@@ -3,9 +3,9 @@
 const { color, dim } = require('./format');
 const { sanitizeTerminalText } = require('../sanitize');
 
-function renderAgentLine(agentData, config, glyphs, lang) {
+function renderAgentLine(agentData, config, glyphs) {
   if (!agentData) return '';
-  if (config.display && config.display.showAgentStatus === false) return '';
+  if (config && config.display && config.display.showAgentStatus === false) return '';
 
   const parts = [];
   const divider = `  \x1b[90m${glyphs.vbar}\x1b[0m  `;
@@ -34,7 +34,28 @@ function renderAgentLine(agentData, config, glyphs, lang) {
 }
 
 function renderToolActivity(activity, glyphs) {
-  if (!activity || !activity.tool) return '';
+  if (!activity) return '';
+
+  // Aggregated turn activity: { active, completed, totalCompleted }
+  if (activity.active || (Array.isArray(activity.completed) && activity.completed.length > 0)) {
+    const parts = [];
+    if (activity.active && activity.active.tool) {
+      const detailStr = activity.active.detail ? dim(`: ${activity.active.detail}`) : '';
+      parts.push(`${glyphs.activeIcon}${color(activity.active.tool, 'cyan')}${detailStr}`);
+    }
+    if (Array.isArray(activity.completed) && activity.completed.length > 0) {
+      const top = activity.completed.slice(0, 3);
+      for (const item of top) {
+        if (!item || !item.tool) continue;
+        const countStr = item.count > 1 ? dim(` ×${item.count}`) : '';
+        parts.push(`${color(glyphs.doneIcon.trim(), 'green')} ${dim(item.tool)}${countStr}`);
+      }
+    }
+    return parts.join('  ');
+  }
+
+  // Legacy single activity: { status, tool, detail }
+  if (!activity.tool) return '';
   if (activity.status === 'active') {
     const detailStr = activity.detail ? dim(`: ${activity.detail}`) : '';
     return `${glyphs.activeIcon}${color(activity.tool, 'cyan')}${detailStr}`;
@@ -43,3 +64,4 @@ function renderToolActivity(activity, glyphs) {
 }
 
 module.exports = { renderAgentLine, renderToolActivity };
+

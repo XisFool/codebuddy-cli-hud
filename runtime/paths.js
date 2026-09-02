@@ -50,10 +50,15 @@ function getSessionStatsStatePath(identity) {
   return path.join(getSessionStatsStateDir(), `${digest}.json`);
 }
 
+function getUserConfigPath() {
+  return resolveCodeBuddyPath('codebuddy-hud.config.json');
+}
+
 module.exports = {
   getCodeBuddyHome,
   resolveCodeBuddyPath,
   getSettingsPath,
+  getUserConfigPath,
   getErrorLogPath,
   getCacheStatePath,
   getCreditStatePath,
@@ -62,3 +67,4 @@ module.exports = {
   getSessionStatsStateDir,
   getSessionStatsStatePath,
 };
+

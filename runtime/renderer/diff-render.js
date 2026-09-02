@@ -7,9 +7,10 @@ function formatCreditSpend(creditSpend) {
   return `${creditSpend.toFixed(2)} credits`;
 }
 
-function renderDiffSegment(diffStats, costData, config, glyphs, lang, creditSpend) {
+function renderDiffSegment(diffStats, costData, config, glyphs, creditSpend, legacyCreditSpend) {
   const parts = [];
   const display = (config && config.display) || {};
+  const actualCreditSpend = typeof creditSpend === 'number' ? creditSpend : (typeof legacyCreditSpend === 'number' ? legacyCreditSpend : null);
 
   const added = (diffStats && diffStats.linesAdded) || 0;
   const removed = (diffStats && diffStats.linesRemoved) || 0;
@@ -18,7 +19,7 @@ function renderDiffSegment(diffStats, costData, config, glyphs, lang, creditSpen
   const totalMs = (costData && costData.totalDurationMs) || 0;
   const apiMs = (costData && costData.apiDurationMs) || 0;
   const hasCost = Boolean(costData && (totalCostUsd > 0 || totalMs > 0));
-  const hasCreditSpend = Number.isFinite(creditSpend) && creditSpend >= 0;
+  const hasCreditSpend = Number.isFinite(actualCreditSpend) && actualCreditSpend >= 0;
 
   // If there's no diff and no cost/duration data, omit Line 3 completely
   if (!hasDiff && !hasCost && !hasCreditSpend) {
@@ -38,7 +39,7 @@ function renderDiffSegment(diffStats, costData, config, glyphs, lang, creditSpen
   // 2. Cost / Credits
   if (display.showCost !== false) {
     if (hasCreditSpend) {
-      parts.push(color(formatCreditSpend(creditSpend), 'yellow'));
+      parts.push(color(formatCreditSpend(actualCreditSpend), 'yellow'));
     } else if (totalCostUsd > 0) {
       parts.push(color(`$${totalCostUsd.toFixed(2)}`, 'yellow'));
     }
