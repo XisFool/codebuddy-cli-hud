@@ -54,6 +54,10 @@ function getUserConfigPath() {
   return resolveCodeBuddyPath('codebuddy-hud.config.json');
 }
 
+function getUpdateStatusPath() {
+  return resolveCodeBuddyPath('codebuddy-hud-update-status.json');
+}
+
 module.exports = {
   getCodeBuddyHome,
   resolveCodeBuddyPath,
@@ -66,5 +70,6 @@ module.exports = {
   getTranscriptUsageStatePath,
   getSessionStatsStateDir,
   getSessionStatsStatePath,
+  getUpdateStatusPath,
 };
 

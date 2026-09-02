@@ -35,7 +35,21 @@ Token 250.1k (in: 249k · out: 1.1k)  │  249k/1M [███░░░░░░�
 
 ---
 
-## 安装
+## 一键极速安装（推荐）
+
+### Windows (PowerShell)
+```powershell
+irm https://raw.githubusercontent.com/XisFool/codebuddy-hud/master/scripts/install.ps1 | iex
+```
+
+### Linux / macOS (Bash)
+```bash
+curl -fsSL https://raw.githubusercontent.com/XisFool/codebuddy-hud/master/scripts/install.sh | bash
+```
+
+---
+
+## 手动从源码安装
 
 前提：已安装 **Node.js >= 18**，并且本机已使用 CodeBuddy Code。
 
@@ -136,7 +150,17 @@ HUD 会自动感知 CodeBuddy 全局主题配置与终端背景环境变量（`C
 
 ---
 
-## 诊断
+## 诊断与环境检查
+
+### 运行内置环境体检器 (`--doctor`)
+
+HUD 内置一键诊断工具，可全面排查 Node 版本、Settings 配置、终端编码、Git 耗时与 Transcript 日志权限：
+
+```bash
+codebuddy-hud --doctor
+# 或者输出 JSON 结构（用于 Issue 报告）
+codebuddy-hud --doctor --json
+```
 
 ### 没有看到 HUD
 

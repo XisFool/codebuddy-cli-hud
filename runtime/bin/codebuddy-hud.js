@@ -129,7 +129,22 @@ if (args.includes('--setup')) {
     console.error('uninstall failed (see codebuddy-hud-error.log)');
   }
   process.exitCode = 0;
+} else if (args.includes('--doctor') || args.includes('-d')) {
+  try {
+    const isJson = args.includes('--json');
+    const { runDoctor, printDoctorReport } = require('../doctor');
+    const report = runDoctor({ cwd: process.cwd(), json: isJson });
+    printDoctorReport(report, isJson);
+  } catch (err) {
+    logError(err);
+    console.error('doctor check failed (see codebuddy-hud-error.log)');
+  }
+  process.exitCode = 0;
 } else if (args.includes('--status')) {
+  try {
+    const { spawnBackgroundUpdateCheck } = require('../update-checker');
+    spawnBackgroundUpdateCheck();
+  } catch {}
   let statusCwd = '';
   try { statusCwd = process.cwd(); } catch { statusCwd = ''; }
   const samplePayload = JSON.stringify({
@@ -143,6 +158,10 @@ if (args.includes('--setup')) {
   });
   handleRender(samplePayload);
 } else {
+  try {
+    const { spawnBackgroundUpdateCheck } = require('../update-checker');
+    spawnBackgroundUpdateCheck();
+  } catch {}
   // Normal statusLine mode: read stdin
   const MAX_STDIN_SIZE = 1024 * 1024;
   let stdinChunks = [];
