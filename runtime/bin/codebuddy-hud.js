@@ -155,8 +155,10 @@ if (args.includes('--setup')) {
   handleRender(samplePayload);
 } else {
   try {
-    const { spawnBackgroundUpdateCheck } = require('../update-checker');
-    spawnBackgroundUpdateCheck();
+    if (process.env.CODEBUDDY_HUD_NO_UPDATE_CHECK !== '1') {
+      const { spawnBackgroundUpdateCheck } = require('../update-checker');
+      spawnBackgroundUpdateCheck();
+    }
   } catch {}
   // Normal statusLine mode: read stdin
   const MAX_STDIN_SIZE = 1024 * 1024;

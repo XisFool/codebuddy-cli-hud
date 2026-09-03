@@ -76,6 +76,7 @@ async function main() {
     ...process.env,
     CODEBUDDY_HOME: tmpHome,
     CODEBUDDY_HUD_FORCE_ASCII: '1',
+    CODEBUDDY_HUD_NO_UPDATE_CHECK: '1',
   };
   delete isolatedEnv.CODEBUDDY_SETTINGS_PATH;
 
@@ -162,7 +163,8 @@ async function main() {
       }
     }
 
-    // 5. Run --uninstall
+    // 5. Seed state files and run --uninstall to verify full cleanup
+    fs.writeFileSync(path.join(tmpHome, 'codebuddy-hud-update-status.json'), '{}');
     const uninstRes = await runProcess(process.execPath, [HUD_BIN, '--uninstall'], { env: isolatedEnv });
     record('uninstall-exit-0', uninstRes.code === 0, `code ${uninstRes.code} (stderr: ${uninstRes.stderr})`);
 

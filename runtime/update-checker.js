@@ -201,6 +201,7 @@ async function checkForUpdates(options) {
 
 function spawnBackgroundUpdateCheck() {
   try {
+    if (process.env.CODEBUDDY_HUD_NO_UPDATE_CHECK === '1') return;
     const currentStatus = readUpdateStatus();
     const now = Date.now();
     if (currentStatus && currentStatus.lastCheck && (now - currentStatus.lastCheck < CHECK_INTERVAL_MS)) {
