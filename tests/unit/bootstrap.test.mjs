@@ -24,4 +24,40 @@ describe('bootstrap installer', () => {
       else process.env.CODEBUDDY_HUD_DIR = originalEnv;
     }
   });
+
+  test('install copies local repo files and configures statusline in isolated environment', async () => {
+    const fs = require('fs');
+    const os = require('os');
+    const { install } = require('../../scripts/bootstrap.js');
+    const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cbhud-boot-test-'));
+    const targetDir = path.join(testRoot, 'runtime-target');
+    const testHome = path.join(testRoot, 'home');
+    const settingsFile = path.join(testHome, 'settings.json');
+    fs.mkdirSync(testHome, { recursive: true });
+    fs.writeFileSync(settingsFile, JSON.stringify({}));
+
+    const savedEnv = {
+      CODEBUDDY_HUD_DIR: process.env.CODEBUDDY_HUD_DIR,
+      CODEBUDDY_HOME: process.env.CODEBUDDY_HOME,
+      CODEBUDDY_SETTINGS_PATH: process.env.CODEBUDDY_SETTINGS_PATH,
+    };
+    try {
+      process.env.CODEBUDDY_HUD_DIR = targetDir;
+      process.env.CODEBUDDY_HOME = testHome;
+      process.env.CODEBUDDY_SETTINGS_PATH = settingsFile;
+
+      await install();
+
+      assert.ok(fs.existsSync(path.join(targetDir, 'runtime', 'bin', 'codebuddy-hud.js')));
+      const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+      assert.ok(settings.statusLine);
+      assert.ok(settings.statusLine.command);
+    } finally {
+      for (const [k, v] of Object.entries(savedEnv)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      fs.rmSync(testRoot, { recursive: true, force: true });
+    }
+  });
 });

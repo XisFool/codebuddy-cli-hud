@@ -55,6 +55,18 @@ describe('sanitizeTerminalText', () => {
     assert.equal(sanitizeTerminalText('分支/中文/naïve'), '分支/中文/naïve');
   });
 
+  it('strips U+2028 and U+2029 line/paragraph separators to prevent newline injection', () => {
+    assert.equal(sanitizeTerminalText('line\u2028break\u2029paragraph'), 'linebreakparagraph');
+  });
+
+  it('strips zero-width characters (U+200B..U+200D, U+2060, U+061C)', () => {
+    assert.equal(sanitizeTerminalText('zero\u200Bwidth\u200Cnon\u200Djoiner\u2060word\u061Cmark'), 'zerowidthnonjoinerwordmark');
+  });
+
+  it('preserves multi-byte unicode emojis correctly', () => {
+    assert.equal(sanitizeTerminalText('🚀 rocket ⚙ gear ◂ queue'), '🚀 rocket ⚙ gear ◂ queue');
+  });
+
   it('leaves no executable escape prefix after truncation or malformed sequences', () => {
     const value = 'ok\x1b[31\x1b]8;;https://example.invalid\x1b\\link\x9b2J\u202eevil';
     const clean = sanitizeTerminalText(value);

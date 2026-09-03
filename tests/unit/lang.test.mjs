@@ -13,6 +13,13 @@ describe('i18n lang module', () => {
     assert.ok(DICTIONARY.en.themeSelectTitle);
   });
 
+  test('runtime/lang.js re-exports runtime/renderer/lang.js', () => {
+    const rootLang = require('../../runtime/lang.js');
+    const rendererLang = require('../../runtime/renderer/lang.js');
+    assert.equal(rootLang, rendererLang);
+    assert.equal(typeof rootLang.getI18n, 'function');
+  });
+
   test('detectLanguage respects explicit configuration', () => {
     assert.equal(detectLanguage({ language: 'zh' }), 'zh');
     assert.equal(detectLanguage({ language: 'en' }), 'en');

@@ -151,6 +151,23 @@ describe('resolveEffortLevel', () => {
     const config = { defaultEffortLevel: 5 };
     assert.equal(resolveEffortLevel(data, config), null);
   });
+
+  it('reads reasoningEffort from settings.json when present', () => {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cbhud-modelinfo-'));
+    const tmpSettings = path.join(tmpDir, 'settings.json');
+    try {
+      fs.writeFileSync(tmpSettings, JSON.stringify({ reasoningEffort: 'xhigh' }));
+      process.env.CODEBUDDY_SETTINGS_PATH = tmpSettings;
+      resetModelInfoCache();
+      const data = { model: { id: 'unknown-model-xyz' } };
+      assert.equal(resolveEffortLevel(data), 'xhigh');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('resolveCreditSpend', () => {

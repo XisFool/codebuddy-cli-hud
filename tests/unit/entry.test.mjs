@@ -113,6 +113,39 @@ test('--status renders and exits 0', async () => {
   }));
 });
 
+test('--theme list renders theme options and exits 0', async () => {
+  const r = await run({ args: ['--theme', 'list'] });
+  assert.equal(r.code, 0);
+  assert.match(r.out, /Available HUD Themes/);
+  assert.equal(r.err, '');
+});
+
+test('--theme <valid> saves theme and exits 0', async () => {
+  const r = await run({ args: ['--theme', 'ocean'] });
+  assert.equal(r.code, 0);
+  const plain = r.out.replace(/\x1b\[[0-9;]*m/g, '');
+  assert.match(plain, /HUD theme set to 'ocean'/);
+  assert.equal(r.err, '');
+});
+
+test('--theme <invalid> prints error and exits 0', async () => {
+  const r = await run({ args: ['--theme', 'non_existent_theme_xyz'] });
+  assert.equal(r.code, 0);
+  assert.match(r.err, /Unknown theme/);
+});
+
+test('--doctor and --doctor --json exit 0', async () => {
+  const docText = await run({ args: ['--doctor'] });
+  assert.equal(docText.code, 0);
+  assert.ok(docText.out.length > 0);
+  assert.equal(docText.err, '');
+
+  const docJson = await run({ args: ['--doctor', '--json'] });
+  assert.equal(docJson.code, 0);
+  assert.doesNotThrow(() => JSON.parse(docJson.out));
+  assert.equal(docJson.err, '');
+});
+
 after(() => {
   fs.rmSync(TEST_HOME, { recursive: true, force: true });
 });
