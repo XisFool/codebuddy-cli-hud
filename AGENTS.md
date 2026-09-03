@@ -33,7 +33,8 @@ runtime/bin/codebuddy-hud.js   入口；--setup/--status/--uninstall/--theme/--d
   ├ statusline-installer.js    --setup 写 settings.json
   └ uninstall.js               --uninstall 清理配置、shim、缓存与状态
 tests/fixtures/*.json          4 个 payload fixture
-scripts/verify-display.js      E2E
+scripts/verify-display.js      E2E 看板与 CLI 命令形态契约验证
+scripts/verify-install.js      隔离宿主安装/卸载生命周期契约验证
 ```
 
 ## 测试与验证命令
@@ -41,7 +42,8 @@ scripts/verify-display.js      E2E
 ```bash
 # 单元测试（推荐 npm test，底层脚本自动向 node --test 传参，兼容 Node 18~24+）
 npm test
-npm run verify                               # 6 个 E2E 场景
+npm run verify                               # 11 个 E2E 场景（payload + CLI + 边界）
+npm run verify:install                       # 隔离宿主真实安装与卸载验证
 node runtime/bin/codebuddy-hud.js --status   # CLI 冒烟探测
 node runtime/bin/codebuddy-hud.js --theme list
 ```

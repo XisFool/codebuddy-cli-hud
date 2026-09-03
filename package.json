@@ -8,7 +8,8 @@
   },
   "scripts": {
     "test": "node scripts/run-tests.js",
-    "verify": "node scripts/verify-display.js"
+    "verify": "node scripts/verify-display.js",
+    "verify:install": "node scripts/verify-install.js"
   },
   "keywords": ["codebuddy", "hud", "statusline", "terminal"],
   "license": "MIT",

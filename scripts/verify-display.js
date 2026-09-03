@@ -24,12 +24,12 @@ function stripAnsi(str) {
   return str.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07]*?(?:\x07|\x1b\\|$)/g, '');
 }
 
-function spawnHud(payloadStr) {
+function spawnHud(payloadStr, args = [], envOverrides = {}) {
   return new Promise((resolve) => {
     const start = Date.now();
-    const child = spawn(process.execPath, [HUD_BIN], {
+    const child = spawn(process.execPath, [HUD_BIN, ...args], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, CODEBUDDY_HUD_FORCE_ASCII: '1' },
+      env: { ...process.env, CODEBUDDY_HUD_FORCE_ASCII: '1', ...envOverrides },
     });
 
     let stdout = '';
@@ -37,6 +37,7 @@ function spawnHud(payloadStr) {
 
     child.stdout.on('data', (d) => { stdout += d.toString(); });
     child.stderr.on('data', (d) => { stderr += d.toString(); });
+    child.stdin.on('error', () => {});
 
     child.on('close', (code) => {
       resolve({ code, stdout, stderr, elapsed: Date.now() - start });
@@ -80,18 +81,7 @@ async function main() {
     void clean;
   }
 
-  // Edge case: empty stdin
-  const emptyResult = await spawnHud(null);
-  if (emptyResult.code === 0) {
-    console.log(`  PASS  empty-stdin (${emptyResult.elapsed}ms, graceful)`);
-    passed++;
-  } else {
-    console.log(`  FAIL  empty-stdin: exit code ${emptyResult.code}`);
-    failed++;
-  }
-
   // Tool activity: real temp transcript with a pending function_call
-  const os = require('os');
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cbhud-e2e-'));
   try {
     const transcriptPath = path.join(tmpDir, 'transcript.jsonl');
@@ -116,6 +106,96 @@ async function main() {
     }
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+
+  // CLI smoke: --status
+  const statusResult = await spawnHud(null, ['--status']);
+  const statusCheck = checkInvariants(statusResult, 'cli-status');
+  if (statusCheck.errors.length === 0) {
+    console.log(`  PASS  cli-status (${statusResult.elapsed}ms, ${statusCheck.lines.length} lines)`);
+    passed++;
+  } else {
+    console.log(`  FAIL  cli-status: ${statusCheck.errors.join(', ')}`);
+    failed++;
+  }
+
+  // CLI smoke: --doctor
+  const doctorResult = await spawnHud(null, ['--doctor']);
+  const doctorErrors = [];
+  if (doctorResult.code !== 0) doctorErrors.push(`exit code ${doctorResult.code}`);
+  if (doctorResult.elapsed > MAX_TIME_MS) doctorErrors.push(`took ${doctorResult.elapsed}ms (>${MAX_TIME_MS}ms)`);
+  if (!doctorResult.stdout.trim()) doctorErrors.push('empty output');
+  if (/\n\s*at \S+ \(/.test(doctorResult.stderr)) doctorErrors.push('stack trace in stderr');
+  if (doctorErrors.length === 0) {
+    console.log(`  PASS  cli-doctor (${doctorResult.elapsed}ms, text report)`);
+    passed++;
+  } else {
+    console.log(`  FAIL  cli-doctor: ${doctorErrors.join(', ')}`);
+    failed++;
+  }
+
+  // CLI smoke: --doctor --json
+  const doctorJsonResult = await spawnHud(null, ['--doctor', '--json']);
+  const doctorJsonErrors = [];
+  if (doctorJsonResult.code !== 0) doctorJsonErrors.push(`exit code ${doctorJsonResult.code}`);
+  if (doctorJsonResult.elapsed > MAX_TIME_MS) doctorJsonErrors.push(`took ${doctorJsonResult.elapsed}ms (>${MAX_TIME_MS}ms)`);
+  if (/\n\s*at \S+ \(/.test(doctorJsonResult.stderr)) doctorJsonErrors.push('stack trace in stderr');
+  try {
+    const parsed = JSON.parse(doctorJsonResult.stdout);
+    if (!parsed || typeof parsed !== 'object') doctorJsonErrors.push('invalid JSON root');
+    if (!Array.isArray(parsed.checks)) doctorJsonErrors.push('missing checks array');
+  } catch (err) {
+    doctorJsonErrors.push(`invalid JSON: ${err && err.message}`);
+  }
+  if (doctorJsonErrors.length === 0) {
+    console.log(`  PASS  cli-doctor-json (${doctorJsonResult.elapsed}ms, valid JSON schema)`);
+    passed++;
+  } else {
+    console.log(`  FAIL  cli-doctor-json: ${doctorJsonErrors.join(', ')}`);
+    failed++;
+  }
+
+  // Boundary: empty stdin
+  const emptyResult = await spawnHud(null);
+  const emptyErrors = [];
+  if (emptyResult.code !== 0) emptyErrors.push(`exit code ${emptyResult.code}`);
+  if (emptyResult.elapsed > MAX_TIME_MS) emptyErrors.push(`took ${emptyResult.elapsed}ms (>${MAX_TIME_MS}ms)`);
+  if (/\n\s*at \S+ \(/.test(emptyResult.stderr)) emptyErrors.push('stack trace in stderr');
+  if (emptyErrors.length === 0) {
+    console.log(`  PASS  boundary-empty-stdin (${emptyResult.elapsed}ms, graceful exit 0)`);
+    passed++;
+  } else {
+    console.log(`  FAIL  boundary-empty-stdin: ${emptyErrors.join(', ')}`);
+    failed++;
+  }
+
+  // Boundary: oversized stdin (>1MB overflow intercepted)
+  const oversizedPayload = 'x'.repeat(1024 * 1024 + 1024);
+  const oversizedResult = await spawnHud(oversizedPayload);
+  const oversizedErrors = [];
+  if (oversizedResult.code !== 0) oversizedErrors.push(`exit code ${oversizedResult.code}`);
+  if (oversizedResult.elapsed > MAX_TIME_MS) oversizedErrors.push(`took ${oversizedResult.elapsed}ms (>${MAX_TIME_MS}ms)`);
+  if (/\n\s*at \S+ \(/.test(oversizedResult.stderr)) oversizedErrors.push('stack trace in stderr');
+  if (oversizedErrors.length === 0) {
+    console.log(`  PASS  boundary-oversized-stdin (${oversizedResult.elapsed}ms, >1MB overflow intercepted)`);
+    passed++;
+  } else {
+    console.log(`  FAIL  boundary-oversized-stdin: ${oversizedErrors.join(', ')}`);
+    failed++;
+  }
+
+  // Boundary: malformed non-JSON input
+  const malformedResult = await spawnHud('<<< not a valid json string >>> { [');
+  const malformedErrors = [];
+  if (malformedResult.code !== 0) malformedErrors.push(`exit code ${malformedResult.code}`);
+  if (malformedResult.elapsed > MAX_TIME_MS) malformedErrors.push(`took ${malformedResult.elapsed}ms (>${MAX_TIME_MS}ms)`);
+  if (/\n\s*at \S+ \(/.test(malformedResult.stderr)) malformedErrors.push('stack trace in stderr');
+  if (malformedErrors.length === 0) {
+    console.log(`  PASS  boundary-malformed-json (${malformedResult.elapsed}ms, invalid JSON handled)`);
+    passed++;
+  } else {
+    console.log(`  FAIL  boundary-malformed-json: ${malformedErrors.join(', ')}`);
+    failed++;
   }
 
   console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);

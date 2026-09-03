@@ -5,6 +5,9 @@ on:
     branches: [ master, main ]
   pull_request:
     branches: [ master, main ]
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 jobs:
   test:
@@ -30,3 +33,6 @@ jobs:
 
       - name: Run E2E Display Verification
         run: npm run verify
+
+      - name: Verify Isolated Host Installation
+        run: node scripts/verify-install.js

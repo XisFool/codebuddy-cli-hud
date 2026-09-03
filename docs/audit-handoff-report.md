@@ -3,7 +3,7 @@
 > 本文档为一次 **4 维度并行 Subagent 深度审计** 的完整结论与后续执行追踪。
 > - **审查对象仓库：** `D:\code_sum\Github\codebuddy-cli-hud`（`XisFool/codebuddy-hud`，`v0.1.0`，master）
 > - **审计日期：** 2026-09-02 | **执行更新：** 2026-09-03
-> - **执行状态：** **第一优先（最小充分集）、第二优先（健壮性防御 F2+F4）与第三优先（文档对齐 + 测试补盲）已全部完成**；第二优先中 6 项按设计决策排除（WONTFIX）；第四优先待推进。
+> - **执行状态：** **第一优先（最小充分集）、第二优先（健壮性防御 F2+F4）、第三优先（文档对齐 + 测试补盲）与第四优先（工程演进与自动化门禁）已全部 100% 完成**；第二优先中 6 项按设计决策排除（WONTFIX）。
 
 ---
 
@@ -14,7 +14,8 @@
 | 命令 | 原始审计基线 | 当前最新结果 | 状态 |
 |---|---|---|:---:|
 | `npm test` | 313 tests，312 通过，1 失败 (F14) | **326 tests，326 全部通过，0 失败** | ✔ 全绿 |
-| `npm run verify` | 6/6 通过 | **6/6 全部通过**（114ms~274ms，远优于 1500ms） | ✔ 全绿 |
+| `npm run verify` | 6/6 通过 | **11/11 全部通过**（覆盖 CLI 形态与边界输入，~2.7s 极速） | ✔ 全绿 |
+| `npm run verify:install` | 待建设 | **8/8 全部通过**（隔离环境真实 setup/shim/uninstall 验证） | ✔ 全绿 |
 | `node runtime/bin/codebuddy-hud.js --doctor` | 全部检查 ✔ | **全部检查 ✔**（Node 24、CODEBUDDY_HOME、settings 等） | ✔ 全绿 |
 | `node runtime/bin/codebuddy-hud.js --status` | 渲染 4 行，exit 0 (含后台派生) | **渲染标准看板，exit 0，纯本地无子进程** | ✔ 全绿 |
 
@@ -23,6 +24,7 @@
 cd "D:/code_sum/Github/codebuddy-cli-hud"
 npm test
 npm run verify
+npm run verify:install
 node runtime/bin/codebuddy-hud.js --doctor
 node runtime/bin/codebuddy-hud.js --status; echo "exit=$?"
 ```
@@ -230,19 +232,26 @@ assert.equal(stdout, 'two words');
   - `tests/unit/bootstrap.test.mjs`：增加在隔离环境下运行 `install()` 的端到端测试。
   - **总用例数由 316 增至 326 个，全部一次性通过。**
 
-**第四优先（工程演进与自动化门禁 · 待推进 TODO）**
-- [ ] **【P1】契约门禁 CI 与夜间 Canary**：升级 `verify-display` 为真实安装验证 + GitHub Actions 定时/多平台 E2E 测试。
+**第四优先（工程演进与自动化门禁 · 2026-09-03 全部完成 100% DONE）**
+- [x] **【P1】契约门禁 CI 与夜间 Canary**：
+  - **扩展 `scripts/verify-display.js` 端到端契约校验**：由原 6 个 stdin fixture 扩充为 11 个端到端场景，覆盖 CLI 状态冒烟（`--status` 校验 4 行上限看板与退出码 0）、环境诊断（`--doctor` 纯文本与 `--doctor --json` 结构化校验）、以及极端管道边界（>1MB 溢出拦截、畸形非 JSON 输入、空管道），全部以 exit 0 且零异常堆栈完成，总耗时控制在数秒内。
+  - **真实宿主隔离安装端到端验证（`scripts/verify-install.js`）**：在隔离临时 `CODEBUDDY_HOME` 中自动化验证完整安装生命周期——验证 `settings.json` 规范写入且原有用户配置完整保留；验证 Windows `.cmd` shim 生成及 POSIX 脚本执行权限；验证生成的 statusLine 命令直接调用并渲染有效看板；验证 `--uninstall` 深度清理（`.cmd` shim 移除、`settings.json` 规范还原、缓存与使用量状态文件全部清空）。
+  - **GitHub Actions 自动化门禁升级（`.github/workflows/ci.yml`）**：
+    - 矩阵（Ubuntu / Windows / macOS × Node 18 / 20 / 22）增加真实宿主隔离安装链路门禁（`node scripts/verify-install.js`）；
+    - 增加夜间定时 Canary 自动化构建（`schedule: cron '0 0 * * *'`）与手动触发（`workflow_dispatch`），持续捕捉 Node 跨版本与跨平台生态环境变化。
 
 ---
 
 ## 8. 交接与当前状态备忘
 
-1. **当前状态（2026-09-03 更新）**：第一优先（最小充分集）、第二优先（健壮性防御）与第三优先（文档真实性对齐 + 测试补盲）均已 **100% 完成**。
+1. **当前状态（2026-09-03 更新）**：第一优先（最小充分集）、第二优先（健壮性防御）、第三优先（文档真实性对齐 + 测试补盲）与第四优先（工程演进与自动化门禁）均已 **100% 完成**。
    - `npm test` **326/326** 全绿（用例净增 13 个，零失败）。
-   - `npm run verify` **6/6** 全绿。
+   - `npm run verify` **11/11** 全绿（覆盖 CLI 命令形态与极端边界管道）。
+   - `npm run verify:install` **8/8** 全绿（跨平台隔离环境真实 setup/shim/uninstall 生命周期验证）。
    - `--doctor` 与 `--status` 正常。
+   - CI 门禁全面覆盖 Windows/macOS/Linux 跨平台隔离安装与夜间 Canary。
 2. **独立 Reviewer Subagent 验收结论（2026-09-03）**：
    - 经逐行静态分析与实机推演，改动精准解决根因，无过度设计与多余抽象（符合 Surgical Changes 与 Simplicity First）。
    - 零 npm 依赖、防 EPIPE/崩溃、纯 CommonJS、<=4 行输出保护、终端防污染等硬约束全部合规，评级为**高质量、可安全合并**。
-3. **下一步切入点**：按路线图推进**第四优先（工程演进与自动化门禁）**——可在 CI 中扩充真实安装调用验证或根据需要发布新版本。
+3. **后续建议**：当前核心审计项与门禁演进已全部就绪，版本稳定性高，可择机打 Tag 并发布新版本。
 4. **外部写入限制**：自升级（`--update`）涉及网络下载与文件覆盖，属于不可逆外部写入，实施前需与用户明确确认。
