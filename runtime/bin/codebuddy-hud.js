@@ -141,10 +141,6 @@ if (args.includes('--setup')) {
   }
   process.exitCode = 0;
 } else if (args.includes('--status')) {
-  try {
-    const { spawnBackgroundUpdateCheck } = require('../update-checker');
-    spawnBackgroundUpdateCheck();
-  } catch {}
   let statusCwd = '';
   try { statusCwd = process.cwd(); } catch { statusCwd = ''; }
   const samplePayload = JSON.stringify({

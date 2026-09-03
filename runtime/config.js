@@ -168,13 +168,12 @@ const DEFAULT_CONFIG = {
   },
   defaultEffortLevel: 'medium',
   language: 'en',
-  icons: {},
 };
 
 // Deep-merge `source` over `target`. Nested objects from BOTH sides are always
 // cloned: the old version aliased `target`'s nested objects when `source` did
 // not mention them, so mutating the merged config silently mutated the
-// module-level DEFAULT_CONFIG (proven leak: merged.icons === DEFAULT_CONFIG.icons).
+// module-level DEFAULT_CONFIG (proven leak: merged.thresholds === DEFAULT_CONFIG.thresholds).
 //
 // `__proto__` keys are skipped: a hostile project config like
 // {"__proto__":{...}} must not swap the merged object's [[Prototype]].
@@ -290,7 +289,7 @@ function loadConfig(cwd) {
   const userConfig = loadJsonFile(userConfigPath);
   if (userConfig) config = deepMerge(config, userConfig);
 
-  if (cwd) {
+  if (typeof cwd === 'string' && cwd) {
     const projectConfigPath = path.join(cwd, 'codebuddy-hud.config.json');
     const project = loadJsonFile(projectConfigPath);
     if (project) config = deepMerge(config, project);

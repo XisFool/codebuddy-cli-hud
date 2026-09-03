@@ -61,7 +61,6 @@ const defaultConfig = {
   cacheHitThresholds: { excellent: 80, partial: 50 },
   defaultEffortLevel: 'medium',
   language: 'en',
-  icons: {},
 };
 
 describe('renderHUD', () => {
@@ -353,5 +352,34 @@ describe('effort label injection defence (hard constraint 5)', () => {
     assert.ok(!output.includes('\x1b]0;title'));
     assert.ok(!output.includes('\x1b[2J'));
     assert.ok(!/[\x80-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(output));
+  });
+
+  it('renders gracefully without crashing when config lacks display or theme sub-objects', () => {
+    const payload = {
+      model: { display_name: 'TestModel', id: 'test' },
+      cwd: os.tmpdir(),
+      context_window: { context_window_size: 1000000, used_percentage: 20, current_usage: { input_tokens: 100, output_tokens: 50 } },
+    };
+    assert.doesNotThrow(() => renderHUD(payload, {}));
+    assert.doesNotThrow(() => renderHUD(payload, { theme: {} }));
+  });
+
+  it('clamps context percentage string to [0, 100]', () => {
+    const overflowPayload = {
+      model: { display_name: 'TestModel', id: 'test' },
+      cwd: os.tmpdir(),
+      context_window: { context_window_size: 1000000, used_percentage: 250, current_usage: { input_tokens: 100, output_tokens: 50 } },
+    };
+    const underflowPayload = {
+      model: { display_name: 'TestModel', id: 'test' },
+      cwd: os.tmpdir(),
+      context_window: { context_window_size: 1000000, used_percentage: -20, current_usage: { input_tokens: 100, output_tokens: 50 } },
+    };
+    const overflowOut = renderHUD(overflowPayload, defaultConfig);
+    const underflowOut = renderHUD(underflowPayload, defaultConfig);
+    assert.ok(overflowOut.includes('100%'), 'overflow must clamp to 100%');
+    assert.ok(!overflowOut.includes('250%'), 'overflow must not display 250%');
+    assert.ok(underflowOut.includes('0%'), 'underflow must clamp to 0%');
+    assert.ok(!underflowOut.includes('-20%'), 'underflow must not display negative percentage');
   });
 });

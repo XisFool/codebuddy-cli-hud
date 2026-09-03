@@ -126,23 +126,42 @@ function selectThemeInteractive(opts) {
     function restoreCursor() {
       try { process.stdout.write('\x1b[?25h'); } catch {}
     }
-    process.once('exit', restoreCursor);
 
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(true);
     }
     process.stdout.write('\x1b[?25l'); // Hide cursor
 
+    let cleanedUp = false;
     function cleanup() {
-      process.removeListener('exit', restoreCursor);
+      if (cleanedUp) return;
+      cleanedUp = true;
+      process.removeListener('exit', onExit);
+      for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+        process.removeListener(sig, onSignal);
+      }
       restoreCursor();
       if (process.stdin.isTTY) {
-        process.stdin.setRawMode(false);
+        try { process.stdin.setRawMode(false); } catch {}
       }
       process.stdin.removeListener('keypress', onKeypress);
-      rl.close();
+      try { rl.close(); } catch {}
       try { process.stdin.pause(); } catch {}
     }
+
+    function onSignal(sig) {
+      cleanup();
+      process.exit(sig === 'SIGINT' ? 130 : 143);
+    }
+
+    function onExit() {
+      cleanup();
+    }
+
+    for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+      process.once(sig, onSignal);
+    }
+    process.once('exit', onExit);
 
     function render() {
       const outputLines = [];

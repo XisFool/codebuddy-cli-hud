@@ -16,31 +16,39 @@ const { readUpdateStatus } = require('./update-checker');
 function renderHUD(cbData, config) {
   if (!cbData || !config) return '';
 
+  // Normalize partial/hand-built configs: config.display and config.theme may be
+  // absent (the bin always supplies them via loadConfig, but renderHUD is the
+  // exported public surface and is also documented as accepting an optional
+  // ResolvedConfig). Defaulting to {} lets the renderer degrade instead of
+  // throwing "Cannot read properties of undefined (reading 'unicode')".
+  const disp = config.display || {};
+  const theme = config.theme || {};
+
   const rawCwd = (cbData && (cbData.cwd || (cbData.workspace && cbData.workspace.current_dir))) || process.cwd();
   const isSafeCwd = typeof rawCwd === 'string' && !rawCwd.includes('\0') && !/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(rawCwd);
   const cwd = isSafeCwd ? path.resolve(rawCwd) : process.cwd();
-  const useUnicode = config.display.unicode === 'auto' ? supportsUnicode() : config.display.unicode !== false;
-  const glyphs = selectGlyphs(config.display.useNerdFonts, useUnicode);
+  const useUnicode = disp.unicode === 'auto' ? supportsUnicode() : disp.unicode !== false;
+  const glyphs = selectGlyphs(disp.useNerdFonts, useUnicode);
   const divider = `  \x1b[90m${glyphs.vbar}\x1b[0m  `;
   const lines = [];
   const tokenData = extractTokenData(cbData);
 
-  const themePrimary = (config.theme && config.theme.primary) || 'cyan';
-  const themeAccent = (config.theme && config.theme.accent) || themePrimary;
-  const themeModel = (config.theme && config.theme.model) || themePrimary;
-  const themeBranch = (config.theme && config.theme.gitBranch) || themePrimary;
+  const themePrimary = theme.primary || 'cyan';
+  const themeAccent = theme.accent || themePrimary;
+  const themeModel = theme.model || themePrimary;
+  const themeBranch = theme.gitBranch || themePrimary;
 
   // The tail scan supplies the current-turn cache badge. Session credits use a
   // separate incremental offset scan and do not reread already-counted bytes.
   const needsTurnUsage = Boolean(cbData.transcript_path) && (
-    (tokenData && config.display.showCacheHitRate !== false)
-    || config.display.showCost !== false
+    (tokenData && disp.showCacheHitRate !== false)
+    || disp.showCost !== false
   );
   const turnUsage = needsTurnUsage ? getTurnUsageMetrics(cbData.transcript_path, {
     cwd,
-    tailBytes: config.display.toolActivityTailBytes,
+    tailBytes: disp.toolActivityTailBytes,
   }) : null;
-  const sessionUsage = (cbData.transcript_path && config.display.showCost !== false)
+  const sessionUsage = (cbData.transcript_path && disp.showCost !== false)
     ? getSessionUsageMetrics(cbData.transcript_path, {
       cwd,
     }) : null;
@@ -71,7 +79,7 @@ function renderHUD(cbData, config) {
   modelSegment += ` ${color(`${effortIcon}${effortLabel}`, effortColor)}`;
   line1Parts.push(modelSegment);
 
-  if (config.display.showGitBranch !== false) {
+  if (disp.showGitBranch !== false) {
     const gitStatus = getGitStatus(cwd);
     if (gitStatus && gitStatus.branch) {
       const cleanBranch = sanitizeTerminalText(gitStatus.branch, 30);
@@ -80,18 +88,18 @@ function renderHUD(cbData, config) {
     }
   }
 
-  if (config.display.showCurrentDir !== false) {
+  if (disp.showCurrentDir !== false) {
     const dirName = sanitizeTerminalText(path.basename(cwd), 20);
     line1Parts.push(color(dirName, themeAccent));
   }
 
-  if (config.display.showPermissionMode !== false && cbData.permission_mode) {
+  if (disp.showPermissionMode !== false && cbData.permission_mode) {
     // 22 chars fits `bypassPermissions` (17) plus headroom for future modes
     // without re-introducing the truncation that produced `bypassPermissio`.
     line1Parts.push(dim(color(sanitizeTerminalText(cbData.permission_mode, 22), 'magenta')));
   }
 
-  if (config.display.showVersion === true && cbData.version) {
+  if (disp.showVersion === true && cbData.version) {
     line1Parts.push(dim('v' + sanitizeTerminalText(cbData.version, 10)));
   }
 
@@ -103,7 +111,7 @@ function renderHUD(cbData, config) {
   lines.push(line1Parts.join(divider));
 
   // Line 2: Context Window & Tokens (Hollow Progress Bar + Dimmed Breakdown)
-  if (tokenData && config.display.showTokenBar !== false) {
+  if (tokenData && disp.showTokenBar !== false) {
     const line2Parts = [];
     const totalTokens = tokenData.inTokens + tokenData.outTokens;
     const dot = color(` ${glyphs.dot} `, 'gray');
@@ -116,7 +124,7 @@ function renderHUD(cbData, config) {
     const tokenStr = `${bold(color('Token ', themePrimary))}${bold(color(formatTokens(totalTokens), themePrimary))} ${color('(', 'gray')}${tokenDetail.join(dot)}${color(')', 'gray')}`;
     line2Parts.push(tokenStr);
 
-    const barWidth = config.display.progressBarWidth || 10;
+    const barWidth = disp.progressBarWidth || 10;
     const bar = createProgressBar(tokenData.ctxPercent, barWidth, config.thresholds, glyphs);
     // Numerator must match the denominator semantics used by used_percentage
     // (current_usage based). Previously we used totalInput (session-cumulative)
@@ -124,16 +132,17 @@ function renderHUD(cbData, config) {
     // displays like `1.1M/1M [█░░░░░░░░░]6%`.
     const ctxLabel = `${color(formatTokens(tokenData.inTokens), themeAccent)}${color('/', 'gray')}${color(formatTokens(tokenData.ctxSize), themePrimary)}`;
 
+    const clampedPct = Number.isFinite(tokenData.ctxPercent) ? Math.max(0, Math.min(100, tokenData.ctxPercent)) : 0;
     let pctColor = 'green';
     const warnPct = ((config.thresholds && config.thresholds.warning) || 0.7) * 100;
     const critPct = ((config.thresholds && config.thresholds.critical) || 0.9) * 100;
-    if (tokenData.ctxPercent >= critPct) pctColor = 'red';
-    else if (tokenData.ctxPercent >= warnPct) pctColor = 'yellow';
+    if (clampedPct >= critPct) pctColor = 'red';
+    else if (clampedPct >= warnPct) pctColor = 'yellow';
 
-    const ctxPercentStr = color(`${Math.round(tokenData.ctxPercent)}%`, pctColor);
+    const ctxPercentStr = color(`${Math.round(clampedPct)}%`, pctColor);
     line2Parts.push(`${ctxLabel} ${color('[', 'gray')}${bar}${color(']', 'gray')} ${ctxPercentStr}`);
 
-    if (config.display.showCacheHitRate !== false) {
+    if (disp.showCacheHitRate !== false) {
       // Real cache telemetry lives in the transcript's providerData, NOT in the
       // statusLine payload (whose cache_read_input_tokens is hard-zero on this
       // provider). A conversation turn spans many API calls (avg 19.3), so the
@@ -179,8 +188,8 @@ function renderHUD(cbData, config) {
   const agentData = extractAgentData(cbData);
   const line4Parts = [];
   line4Parts.push(renderAgentLine(agentData, config, glyphs));
-  if (config.display.showToolActivity !== false) {
-    const tailBytes = config.display.toolActivityTailBytes;
+  if (disp.showToolActivity !== false) {
+    const tailBytes = disp.toolActivityTailBytes;
     const activity = getTurnToolActivity(cbData.transcript_path, { cwd, tailBytes })
       || getRecentToolActivity(cbData.transcript_path, { cwd, tailBytes });
     line4Parts.push(renderToolActivity(activity, glyphs));
@@ -188,7 +197,7 @@ function renderHUD(cbData, config) {
   const line4 = line4Parts.filter(Boolean).join(divider);
   if (line4) lines.push(line4);
 
-  const maxLines = config.display.maxLines || 4;
+  const maxLines = disp.maxLines || 4;
   return lines.slice(0, maxLines).join('\n');
 }
 

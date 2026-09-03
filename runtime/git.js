@@ -50,6 +50,7 @@ function getGitStatus(cwd, timeoutMs = 200) {
       cwd: resolvedCwd,
       encoding: 'utf8',
       timeout: timeoutMs,
+      maxBuffer: 4 * 1024 * 1024,
       stdio: ['pipe', 'pipe', 'ignore'],
       windowsHide: true,
       env: Object.assign({}, process.env, { GIT_OPTIONAL_LOCKS: '0' }),

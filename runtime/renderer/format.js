@@ -41,7 +41,6 @@ function formatTokens(n) {
     const val = n / 1000;
     let str = val.toFixed(1);
     if (str.endsWith('.0')) str = str.slice(0, -2);
-    if (str === '1000') return '1M';
     return str + 'k';
   }
   return Math.round(n).toString();

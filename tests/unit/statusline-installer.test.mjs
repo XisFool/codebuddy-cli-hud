@@ -237,11 +237,16 @@ test('generated Windows shim runs through cmd.exe from a special-character path'
   try {
     fs.writeFileSync(hudPath, "process.stdout.write(process.argv.slice(2).join('|'));\n");
     fs.writeFileSync(shimPath, buildCmdShimContent(process.execPath));
-    // Execute from the special-character directory so the batch expansion of
-    // %~dp0 has to carry its path through cmd.exe safely.
+    // Invoke the shim with the fully-quoted absolute .cmd path, exactly as the
+    // host does (buildStatusLineCommand for win32). A bare cwd-relative batch
+    // name is NOT how the host launches it, and cmd.exe /s /c does not reliably
+    // run a bare relative batch name carrying a quoted argument, so the test
+    // used to fail here with empty output. The '/'&-containing directory is
+    // still exercised because buildStatusLineCommand quotes the path, which is
+    // precisely how the ampersand stays safe in production.
     const stdout = execSync(
-      'codebuddy-hud.cmd "two words"',
-      { cwd: tempRoot, shell: process.env.ComSpec || 'cmd.exe', encoding: 'utf8', windowsHide: true },
+      buildStatusLineCommand('win32', hudPath, process.execPath) + ' "two words"',
+      { cwd: os.tmpdir(), shell: process.env.ComSpec || 'cmd.exe', encoding: 'utf8', windowsHide: true },
     );
     assert.equal(stdout, 'two words');
   } finally {

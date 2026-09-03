@@ -115,6 +115,13 @@ describe('loadConfig', () => {
     assert.equal(DEFAULT_CONFIG.display.maxLines, 4);
     assert.equal(DEFAULT_CONFIG.theme, 'ocean');
   });
+
+  it('handles non-string cwd gracefully without throwing', () => {
+    assert.doesNotThrow(() => loadConfig({ invalid: 'cwd' }));
+    assert.doesNotThrow(() => loadConfig(12345));
+    assert.doesNotThrow(() => loadConfig(null));
+    assert.doesNotThrow(() => loadConfig(undefined));
+  });
 });
 
 describe('THEME_PRESETS and resolveTheme', () => {
