@@ -45,7 +45,7 @@
 ```javascript
 const TIMEOUT_MS = 800;          // Stdin 安全超时，预留 700ms 给渲染与 stdout 刷新
 const LOG_MAX_BYTES = 1024 * 1024; // 错误日志 1MB 自动轮转上限
-const MAX_STDIN_SIZE = 1024 * 1024;// Stdin 接收上限 1MB，防超大管道内存溢出
+const MAX_STDIN_SIZE = 1024 * 1024;// Stdin 接收上限 1MB（stdin 管道分支内的局部常量）
 ```
 
 ### 错误与退出契约 (Design Decisions & Why)
@@ -81,7 +81,6 @@ export function extractCostData(cbData: CodeBuddyPayload): {
   totalCostUsd: number;
   totalDurationMs: number;
   apiDurationMs: number;
-  credits: number | null;
 } | null;
 
 export function extractAgentData(cbData: CodeBuddyPayload): {
@@ -135,11 +134,11 @@ export function detectThemeMode(config: ResolvedConfig): 'dark' | 'light';
 ```
 
 ### 内置主题预设 (THEME_PRESETS)
-- `ocean` (默认): 深海青蓝科技风 (`#00b4d8` + `#90e0ef`)
-- `emerald`: 翡翠绿清新护眼 (`#2ec4b6` + `#a7c957`)
-- `cyberpunk`: 赛博朋克炫酷粉紫+荧光青 (`#ff007f` + `#00f0ff`)
-- `amber`: 琥珀金复古沉稳 (`#ffb703` + `#fb8500`)
-- `monochrome`: 黑白极简经典终端 (`#e0e0e0` + `#8a8a8a`)
+- `ocean` (默认): 深海青蓝科技风 (dark: `cyan`/`gray`, light: `blue`/`gray`)
+- `emerald`: 翡翠绿清新护眼 (dark: `green`/`gray`/`cyan`, light: `green`/`gray`/`blue`)
+- `cyberpunk`: 赛博朋克炫酷粉紫+荧光青 (dark: `magenta`/`cyan`, light: `magenta`/`blue`)
+- `amber`: 琥珀金复古沉稳 (dark/light: `yellow`/`gray`)
+- `monochrome`: 黑白极简经典终端 (dark/light: `gray`/`gray`)
 
 ### 安全机制 (Why)
 `deepMerge()` 内部校验：
@@ -158,13 +157,7 @@ if (key === '__proto__' || key === 'constructor' || key === 'prototype') continu
 ```typescript
 export function renderHUD(
   cbData: CodeBuddyPayload | null,
-  config?: ResolvedConfig,
-  overrides?: {
-    turnCacheMetrics?: TurnCacheMetrics | null;
-    toolActivity?: ToolActivity | null;
-    sessionCreditSpend?: number | null;
-    logicalSessionCost?: LogicalCostData | null;
-  }
+  config?: ResolvedConfig
 ): string;
 ```
 
@@ -308,7 +301,6 @@ export function getGitStatus(
 ): {
   branch: string;
   dirty: boolean;
-  durationMs: number;
 } | null;
 ```
 
@@ -411,8 +403,8 @@ export function parseSemver(v: string): [number, number, number];
 
 ### 接口定义
 ```typescript
-export function selectThemeInteractive(): Promise<void>;
-export function printThemeList(config: ResolvedConfig): void;
+export function selectThemeInteractive(): Promise<string>;
+export function printThemesList(): void;
 ```
 
 ---
@@ -433,6 +425,6 @@ export function uninstall(options?: object): void;
 **职责：** 支持本地与 GitHub Raw 远程安装，通过临时目录 `.tmp-<pid>` + 原子重命名完成无缝安装覆盖。
 
 ### 核心函数
-- `bootstrap(options?: object): Promise<void>`
-- `copyLocalRuntime(sourceDir: string, targetDir: string): void`
-- `downloadRemoteRuntime(targetDir: string): Promise<void>`
+- `install(options?: object): Promise<void>`: 核心安装入口，支持本地复制与远端下载，通过临时目录 + 原子重命名完成安装。
+- `getTargetDir(): string`: 返回运行时目标安装目录路径（受 `CODEBUDDY_HUD_DIR` 环境变量影响）。
+- `checkNodeVersion(): void`: 校验当前 Node.js 版本 ≥18，不满足时抛出错误。

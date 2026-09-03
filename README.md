@@ -6,7 +6,7 @@
 
 > CodeBuddy Code 的实时终端 statusLine HUD。每次会话刷新后，它在终端底部展示当前模型、上下文、Token、缓存命中、代码变更、会话 Credits 与任务进度。
 >
-> 不需要 `npm install`，不发送网络请求，也不会因为 HUD 出错而中断 CodeBuddy。
+> 不需要 `npm install`，不会因为 HUD 出错而中断 CodeBuddy。仅在后台发起匿名轻量版本更新检查（24h/次，静默），不收集或上传任何代码与会话数据。
 
 [GitHub 项目](https://github.com/XisFool/codebuddy-hud) · [安装](#安装) · [主题换肤](#主题换肤) · [验证](#验证) · [诊断](#诊断) · [卸载](#卸载)
 
@@ -259,6 +259,7 @@ node runtime/bin/codebuddy-hud.js --uninstall
 | `thresholds` | `object` | 上下文使用率进度条颜色阈值，默认 `{ "warning": 0.7, "critical": 0.9 }`。 |
 | `cacheHitThresholds` | `object` | Cache 命中率四级色阶阈值，默认 `{ "excellent": 80, "partial": 50 }`。 |
 | `defaultEffortLevel` | `string` / `"medium"` | 默认思考推理强度兜底（`"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`, `"ultracode"`）。 |
+| `language` | `string` / `"en"` | HUD 界面语言（`"en"` 英文、`"zh"` 中文）。 |
 
 无论怎样配置，HUD 都不会超过 4 行。
 
@@ -318,7 +319,7 @@ node runtime/bin/codebuddy-hud.js --setup
 
 ## 隐私、兼容性与限制
 
-- 不发送网络请求，不读取 transcript 以外的会话内容。
+- 仅在后台发起匿名轻量版本更新检查（每 24 小时最多一次，静默 HTTPS 拉取 `package.json` 版本号），不收集或上传任何代码、会话或用户数据。不读取 transcript 以外的会话内容。
 - 所有输出到终端的外部文本都会经过 `sanitizeTerminalText()`；ANSI/OSC 注入、控制字符和 bidi/RTL 控制字符会被移除。
 - Credits checkpoint 和会话基线只保存在本机 CodeBuddy 根目录。缓存损坏、文件截断或状态不可写时会自动降级，不会中断 HUD。
 - Windows、Linux、macOS、WSL 均支持；含空格、Unicode 与常见 shell 特殊字符的安装路径可用。

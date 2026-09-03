@@ -17,7 +17,7 @@ HUD 同步输出 ≤4 行 ANSI 看板并退出。CommonJS，Node >=18。
 ## 架构（入口 → 数据流）
 
 ```
-runtime/bin/codebuddy-hud.js   入口；--setup/--status/--uninstall/--theme
+runtime/bin/codebuddy-hud.js   入口；--setup/--status/--uninstall/--theme/--doctor
   ├ parser.js                  从 payload 提取 token/diff/cost/agent
   ├ config.js                  内置 THEME_PRESETS、Dark/Light 模式解析与 deepMerge
   ├ theme-selector.js          TTY 实时所见即所得交互主题选择器
@@ -27,6 +27,8 @@ runtime/bin/codebuddy-hud.js   入口；--setup/--status/--uninstall/--theme
   │ └ renderer/agents-render.js Line 4 工具活动与频次聚合
   ├ transcript.js              尾读 transcript（本轮工具频次聚合 + 本轮 usage 聚合）
   ├ session-stats.js           /clear 会话重置识别与 Diff/耗时逻辑基线管理
+  ├ doctor.js                  --doctor 环境诊断（Node/配置/编码/Git/transcript）
+  ├ update-checker.js          后台版本更新检查（24h 间隔、detached 子进程）
   ├ git.js / model-info.js / encoding.js / sanitize.js / paths.js
   ├ statusline-installer.js    --setup 写 settings.json
   └ uninstall.js               --uninstall 清理配置、shim、缓存与状态

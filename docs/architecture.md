@@ -132,7 +132,7 @@ sequenceDiagram
 ### 5.1 Reverse Sliding-Window Transcript Scanning (`transcript.js`)
 - **Problem**: Comprehensive telemetry (Prompt Cache hits, exact credit billing, tool names) is only recorded in the host's `transcript.jsonl`. However, transcript files can exceed hundreds of megabytes during long coding sessions.
 - **Scanning Algorithm**:
-  1. **Tail Seeking**: Opens the file descriptor and reads backwards from `EOF` in $16\text{KB} \sim 64\text{KB}$ sliding chunks (capped at $256\text{KB}$ total scan window).
+  1. **Tail Seeking**: Opens the file descriptor and reads backwards from `EOF` in fixed $16\\text{KB}$ sliding chunks (default `tailBytes: 16384`, capped at $256\\text{KB}$ total scan window).
   2. **Straddle Line Reconstruction**: When a sliding chunk boundary cuts across a JSON line, the trailing fragment is buffered and prepended to the preceding chunk to assemble valid JSON.
   3. **Turn Boundary Termination**: The scanner traverses backwards, aggregating API usage blocks until it encounters an entry with `role: 'user'`. This guarantees metrics reflect the **current turn aggregation**, not isolated burst steps.
   4. **Field Priority Resolution**:
@@ -147,7 +147,7 @@ sequenceDiagram
 - **State Machine**:
   1. Persists logical session baselines in `~/.codebuddy/codebuddy-hud-session-state/<hash>.json`.
   2. Detects a clear boundary if:
-     - The current `input_tokens` drops below $1\%$ of previous total input while cumulative total remains high;
+     - The current `input_tokens` drops to $\le 2048$ while previous total input was $\ge 8192$ (absolute threshold, not percentage);
      - Current `session_id` changes for the same transcript path;
      - Lines added/removed drop below previous baseline numbers.
   3. Subtracts the established baseline from raw host stats to display accurate turn-relative diffs and elapsed durations.
@@ -156,7 +156,7 @@ sequenceDiagram
 - **Problem**: Summing full session credit costs across thousands of JSONL lines on every $300\text{ms}$ trigger causes severe CPU throttling.
 - **Checkpoint Algorithm**:
   1. Hashes the transcript absolute path with SHA-256 to isolate state: `~/.codebuddy/codebuddy-hud-usage-state/<sha256>.json`.
-  2. Stores `{ offset: number, credits: number, inode: number, size: number }`.
+  2. Stores checkpoint state (version 5): `{ version, path, identity: { dev, ino, birthtimeMs }, headHash, offset, credits, creditCallCount, checkpointHash, sourceSize, sourceMtimeNs, sourceCtimeNs, sourceContentHash, updatedAt }`.
   3. On subsequent invocations, reads strictly from `offset` to `EOF` (sub-millisecond parsing).
   4. **Rewrite & Truncation Guard**: If current `file.size < state.offset`, the state machine detects in-place rewrite or truncation, resets `offset = 0`, and seamlessly rebuilds the checkpoint.
 
@@ -178,14 +178,15 @@ sequenceDiagram
   ```
 
 ### 5.5 Multi-Layer Configuration & Theme Engine (`config.js`)
-- **Precedence Hierarchy**:
+- **Precedence Hierarchy** (5 layers, merged via `deepMerge` in `loadConfig`):
   ```
-  Defaults (Built-in) 
-    → Built-in Theme Presets (ocean, emerald, cyberpunk, amber, monochrome)
+  Defaults (Built-in DEFAULT_CONFIG)
+    → Bundled Config (runtime/codebuddy-hud.config.json)
       → Global User Config (~/.codebuddy/codebuddy-hud.config.json)
-        → Project Local Config (./codebuddy-hud.config.json)
-          → Runtime CLI Arguments (--theme <name>)
+        → Project Local Config (<cwd>/codebuddy-hud.config.json)
+          → Theme Resolution (resolveTheme based on merged config)
   ```
+  Note: `--theme <name>` is a persistent write operation (saves to user config), not a runtime argument overlay.
 - **Security Guard**: `deepMerge()` explicitly strips `__proto__`, `constructor`, and `prototype` keys with a maximum recursion depth cap of 64 to prevent Prototype Pollution attacks.
 
 ### 5.6 4-Line Adaptive Layout & Pruning (`renderer.js`)
