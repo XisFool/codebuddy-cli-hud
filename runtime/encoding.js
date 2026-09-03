@@ -97,10 +97,10 @@ function supportsUnicode() {
         });
         const match = out.match(/(\d+)/);
         _unicodeSupported = match ? match[1] === '65001' : false;
+        writeUnicodeSupportCache(_unicodeSupported);
       } catch {
         _unicodeSupported = false;
       }
-      writeUnicodeSupportCache(_unicodeSupported);
     }
   } else {
     _unicodeSupported = detectUnicodeSupport(process.platform, process.env);

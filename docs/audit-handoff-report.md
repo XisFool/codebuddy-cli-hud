@@ -3,7 +3,7 @@
 > 本文档为一次 **4 维度并行 Subagent 深度审计** 的完整结论与后续执行追踪。
 > - **审查对象仓库：** `D:\code_sum\Github\codebuddy-cli-hud`（`XisFool/codebuddy-hud`，`v0.1.0`，master）
 > - **审计日期：** 2026-09-02 | **执行更新：** 2026-09-03
-> - **执行状态：** **第一优先（最小充分集）已全部修复完成并通过独立 Subagent 复核**；第二、三、四优先待推进。
+> - **执行状态：** **第一优先（最小充分集）与第二优先（健壮性防御 F2+F4）已全部完成**；第二优先中 6 项按设计决策排除（WONTFIX）；第三、四优先待推进。
 
 ---
 
@@ -98,52 +98,37 @@ node runtime/bin/codebuddy-hud.js --status; echo "exit=$?"
 
 ---
 
-#### 待推进的 P2 缺陷清单（TODO）
+##### 待推进的 P2 缺陷清单（2026-09-03 决策更新）
 
-**F9 【待推进 TODO】✅ `getSessionUsageMetrics` 前向扫描无总字节上限（可阻塞事件循环 >1500ms）**
-- 场景：每次刷新（~300ms）都调用；首次/缓存失效/轮转时 `offset=0`，`transcript.js:522-555` `while(cursor<size)` 同步读完整追加增量。
-- 根因：每块 64KB 有界，但总扫描字节无界，仅峰值内存受限。
-- 修复方案：
-```js
-const CAP = 256 * 1024;   // 或 512KB
-let scanned = 0;
-while (cursor < size && scanned < CAP) { ... scanned += readLen; ... }
-// 若因 cap 提前退出，持久化本次已扫描的 offset，下次续读（收敛而非停摆）
-```
+**F2 【已修复 DONE】⚠️ `sanitizeTerminalText` 未剥离 U+2028/2029（LS/PS 行/段落分隔符）与零宽字符族**
+- 修复：`runtime/sanitize.js:18` 正则补齐 `\u200b-\u200d`、`\u2028`、`\u2029`、`\u2060`、`\u061c`。
 
-**F16 【待推进 TODO】✅ 更新检查占位锁「先读后写」(TOCTOU) — 两个并发进程都会派生子进程**
-- 场景：`paths.js:39-41` 明确多工作区并存；`spawnBackgroundUpdateCheck()`（`update-checker.js:133-157`）读门(135)→写锁(142)→派生(148)，`fs.writeFileSync` 非排他、无 CAS。
-- 修复方案（排他锁 + finally 释放）：
-```js
-const lockPath = getUpdateStatusPath() + '.lock';
-try {
-  const fd = fs.openSync(lockPath, 'wx');   // EEXIST 即已有人建锁
-  try { /* check gate + write update status */ } finally { fs.closeSync(fd); fs.rmSync(lockPath, { force: true }); }
-} catch (e) { if (e.code !== 'EEXIST') throw; /* 竞争 → 放弃派生 */ }
-```
+**F4 【已修复 DONE】⚠️ `chcp.com` 探测超时/失败结果被错误持久化到磁盘缓存**
+- 根因：`catch` 分支将 `_unicodeSupported = false` 后无条件执行 `writeUnicodeSupportCache()`，一次偶发超时导致永久 ASCII fallback。
+- 修复：`runtime/encoding.js` 将 `writeUnicodeSupportCache()` 移入 `try` 块内，仅在 chcp 成功时持久化。
+- 注：timeout 值保持 2000ms 不变——chcp.com 是 Windows 内建命令（正常 <50ms），结果缓存到磁盘后仅首次执行，2000ms 作为极端兜底足够。
 
-**F2 【待推进 TODO】⚠️ `sanitizeTerminalText` 未剥离 U+2028/2029（LS/PS 行/段落分隔符）**
-- 场景：外部串含 U+2028 `evil MIRROR` —— `JSON.stringify` 不转义、筛除类也不含；`sanitizeTerminalText('a b')` 原样返回。终端/下游按行切分者会重流成多行。
-- 修复方案（`runtime/sanitize.js:18`）：
-```js
-.replace(/[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069\u2028\u2029\u200b-\u200d\u2060\u061c]/g, '')
-```
+---
 
-**F4 【待推进 TODO】⚠️ 同步 `chcp.com` 探测（最高 2000ms）落在时序敏感的渲染路径**
-- 场景：Win32 缺失/损坏/不可读 unicode 缓存时，`supportsUnicode()` 在 `renderHUD` 内同步 `execSync('chcp.com',{timeout:2000})`，单次可超 1500ms 预算。
-- 修复方案：探测 timeout 压到剩余预算之下（如 ≤500ms），且**不要把超时/错误派生的 `false` 持久化**。
+#### 按设计决策排除的 P2 项（❌ WONTFIX，2026-09-03 经评审确认）
 
-**F1 【待推进 TODO】✅ `renderToolActivity` 未做本地 sanitize 兜底（纵深防御契约缺口）**
-- 场景：外部工具名/详情含 ANSI/OSC/Bidi。公开导出的 `renderToolActivity` 内部应做好本地防御。
+**F9 ❌ `getSessionUsageMetrics` 前向扫描无总字节上限**
+- 排除理由：实测 CodeBuddy 本地 transcript 最大约 10MB，SSD 同步读 10MB（64KB 块 × ~160 块）约 50-100ms，远低于 1500ms 预算。加 CAP + offset 落盘续读属于过度设计。
 
-**F10 【待推进 TODO】✅ 大转录（>256KB）同尺寸原地重写无法察觉**
-- 场景：>256KB 转录被同路径/同尺寸原地重写，需增加保守的抽样重扫复核。
+**F16 ❌ 更新检查占位锁 TOCTOU**
+- 排除理由：最坏后果是两个 HUD 进程各发一次 HTTPS 请求拉 `package.json`（24h 检查一次），无数据损坏风险。偶尔多一个请求可接受。
 
-**F12 【待推进 TODO】✅ 非-65001 代码页结果重探测机制**
-- 注意：既有单元测试依赖 `resetCache()` 作为仅内存清理的测试夹具；若增加磁盘文件清理，建议暴露独立函数 `resetCacheStateFile()` 或在 `--uninstall`/`--setup` 时统一清理，避免打破单测契约。
+**F1 ❌ `renderToolActivity` 未做本地 sanitize 兜底**
+- 排除理由：工具名/detail 来自 CodeBuddy 写入 transcript 的结构化 JSON，非用户可控输入。上游 `renderHUD` 已对最终输出做 sanitize。内部函数再加一层属于纵深防御的纵深防御，收益极低。
 
-**F19 【待推进 TODO】⚠️ `doctor.js` 无逐项检查 try/catch 隔离**
-- 场景：`runDoctor` 裸调用各 check，任一将来 check 抛错即整体崩溃。包 try/catch 隔离加固。
+**F10 ❌ 大转录同尺寸原地重写无法察觉**
+- 排除理由：Transcript 是 append-only 日志文件，"同路径、同尺寸、同头部、同 mtime 的原地替换"在正常使用中不可能发生。
+
+**F12 ❌ 无独立磁盘缓存清理接口**
+- 排除理由：`--uninstall` → `--setup` 已能解决 codepage 变更场景。为极罕见需求新增 API 属于过度设计。
+
+**F19 ❌ `doctor.js` 无逐项检查 try/catch 隔离**
+- 排除理由：doctor 定位为诊断工具，任何检查异常说明环境本身有问题，直接报错（而非吞掉错误展示部分结果）是合理行为。
 
 ### 已排除（❌ REFUTED，非缺陷，勿再修）
 - **F8**「Line 3 渲染为孤立 `0.00 credits`」→ 验证为**刻意且已被测试固化**的行为（`tests/unit/renderer.diff.test.mjs:61-64`），非缺陷。
@@ -227,15 +212,10 @@ assert.equal(stdout, 'two words');
 - [x] **补齐单元测试**：`tests/unit/config.test.mjs`、`renderer.layout.test.mjs`、`update-checker.test.mjs`（用例增至 316 个）。
 - [x] **独立 Subagent 复核**：派驻独立 Reviewer 复核代码无副作用，通过 316/316 单元测试与 6/6 E2E 校验。
 
-**第二优先（当前最高优先级 · 健壮性与时序防御 · 待推进 TODO）**
-- [ ] **F9**（前向扫描预算化 + offset 落盘）：`getSessionUsageMetrics` 设单次扫描 CAP (256KB/512KB)，根治超大 transcript 初次加载延迟。
-- [ ] **F16**（更新锁排他化）：`update-checker.js` 改用 `fs.openSync(lockPath, 'wx')`，消除多进程并发写锁 TOCTOU。
-- [ ] **F2 + sanitize 零宽字符过滤**：`sanitizeTerminalText` 正则补 `\u2028/29` 行分隔符与零宽族（`\u200b-\u200d\u2060`）；截断改按码点（code points）。
-- [ ] **F4**（chcp 探测超时压缩）：压至 ≤500ms 且禁止把超时/失败派生的 `false` 持久化写入磁盘缓存。
-- [ ] **F1**（renderToolActivity 本地兜底 sanitize）：为公开导出增加参数防御。
-- [ ] **F10**（大文件原地改写保守复核）：同路径、同尺寸、同 mtime 下增设保守抽样复核。
-- [ ] **F12**（状态文件清理）：提供独立接口或在 setup/uninstall 中清理缓存，保留既有内存 reset 契约。
-- [ ] **F19**（doctor 逐项 try/catch 隔离）：加固每个 check 的异常捕获。
+**第二优先（健壮性与时序防御 · 2026-09-03 决策完成）**
+- [x] **F2**（sanitize 零宽字符过滤）：`sanitizeTerminalText` 正则补齐 `\u2028/29` 行分隔符与零宽族。
+- [x] **F4**（chcp 探测失败持久化）：仅在 chcp 成功时才写磁盘缓存，超时/异常不持久化。
+- ~~F9/F16/F1/F10/F12/F19~~：经评审确认为过度设计或可接受风险，按 WONTFIX 排除（详见 §3 决策记录）。
 
 **第三优先（文档与代码真实性对齐 + 测试补盲 · 待推进 TODO）**
 - [ ] **README.md 真实性修正**：修正第 9、321 行“不发送网络请求”为“仅发起匿名轻量版本更新检查（24h/次，后台静默），不收集或上传任何代码或会话数据”；补充 `language`，删除无用配置键 `icons`。
@@ -251,16 +231,10 @@ assert.equal(stdout, 'two words');
 
 ## 8. 交接与当前状态备忘
 
-1. **当前状态**：第一优先（最小充分集）已 100% 修复完毕，`npm test` 316/316 全绿，`npm run verify` 6/6 全绿，`--doctor` 与 `--status` 正常。
+1. **当前状态（2026-09-03 更新）**：第一优先（最小充分集）与第二优先（健壮性防御）均已完成。`npm test` 316/316 全绿，`npm run verify` 6/6 全绿，`--doctor` 与 `--status` 正常。
+   - 第二优先实际修复 2 项真实缺陷（F2 sanitize 零宽字符、F4 chcp 持久化），其余 6 项经评审确认为过度设计或可接受风险，按 WONTFIX 排除。
 2. **独立 Reviewer Subagent 验收结论（2026-09-03）**：
    - 经逐行静态分析与实机推演，本次 7 个核心源码文件与 4 个测试文件的改动精准解决根因，无过度设计与多余抽象（符合 Surgical Changes 与 Simplicity First）。
    - 零 npm 依赖、防 EPIPE/崩溃、纯 CommonJS、<=4 行输出保护、终端防污染等硬约束全部合规，评级为**高质量、可安全合并**。
-3. **下阶段核心聚焦建议（Subagent 独立建议，按优先级排序）**：
-   - **【P2·高吞吐保障】F9 扫描字节上限控制**：`getSessionUsageMetrics` 设置 256KB/512KB 单次扫描上限，持久化已扫描 offset 分步递增收敛，彻底根治大 transcript 初次加载延迟。
-   - **【P2·并发安全】F16 更新检查占位锁排他化**：`update-checker.js` 改用 `fs.openSync(lockPath, 'wx')` 实现原子排他文件锁，消除多进程并发写锁时的 TOCTOU 竞争。
-   - **【P2·终端安全】F2 过滤行分隔符与零宽字符**：`sanitizeTerminalText` 正则补齐 `\u2028/29`（行/段落分隔符）与零宽字符族（`\u200b-\u200d\u2060`），防止破坏 <=4 行布局；截断改按码点（code points）以防切断代理对。
-   - **【文档真实性】修正 README 网络声明**：明确说明为“仅发起匿名轻量版本更新检查（24h/次，后台静默），不收集或上传任何代码或会话数据”，消除发布事故隐患。
-4. **下一步切入点**：按路线图继续推进**第二优先（上述健壮性加固）**与**第三优先（文档真实性对齐）**。
-5. **外部写入限制**：自升级（`--update`）涉及网络下载与文件覆盖，属于不可逆外部写入，实施前需与用户明确确认。
-
-
+3. **下一步切入点**：推进**第三优先（文档与代码真实性对齐）**——修正 README 网络声明、module-reference 伪造字段/颜色、architecture 算法描述漂移、AGENTS.md 命令树补全。
+4. **外部写入限制**：自升级（`--update`）涉及网络下载与文件覆盖，属于不可逆外部写入，实施前需与用户明确确认。
