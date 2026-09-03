@@ -17,7 +17,7 @@ HUD 同步输出 ≤4 行 ANSI 看板并退出。CommonJS，Node >=18。
 ## 架构（入口 → 数据流）
 
 ```
-runtime/bin/codebuddy-hud.js   入口；--setup/--status/--uninstall/--theme/--doctor
+runtime/bin/codebuddy-hud.js   入口；--setup/--status/--uninstall/--theme/--doctor/-d
   ├ parser.js                  从 payload 提取 token/diff/cost/agent
   ├ config.js                  内置 THEME_PRESETS、Dark/Light 模式解析与 deepMerge
   ├ theme-selector.js          TTY 实时所见即所得交互主题选择器
