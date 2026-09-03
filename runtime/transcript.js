@@ -347,7 +347,6 @@ function getTurnUsageMetrics(transcriptPath, opts) {
 const SESSION_STATE_VERSION = 5;
 const SESSION_HEAD_BYTES = 4096;
 const SESSION_READ_CHUNK_BYTES = 64 * 1024;
-const SMALL_SESSION_VERIFY_BYTES = 256 * 1024;
 
 function statIdentity(stat) {
   return {
@@ -376,26 +375,6 @@ function readHeadHash(fd, size) {
   return hashBuffer(buffer);
 }
 
-// Some network and mounted filesystems expose coarse or delayed mtime/ctime
-// updates. For small transcripts, an inexpensive whole-file hash closes that
-// gap and reliably catches a same-size in-place rewrite. Large transcripts
-// retain the metadata/checkpoint incremental path so each HUD refresh never
-// turns into a full multi-megabyte read.
-function readSmallFileHash(fd, size) {
-  if (size > SMALL_SESSION_VERIFY_BYTES) return null;
-  const hash = crypto.createHash('sha256');
-  const buffer = Buffer.alloc(Math.min(SESSION_READ_CHUNK_BYTES, Math.max(1, size)));
-  let position = 0;
-  while (position < size) {
-    const length = Math.min(buffer.length, size - position);
-    const bytesRead = fs.readSync(fd, buffer, 0, length, position);
-    if (!bytesRead) break;
-    hash.update(buffer.subarray(0, bytesRead));
-    position += bytesRead;
-  }
-  return position === size ? hash.digest('hex') : null;
-}
-
 function readSessionState(statePath, resolved, identity, size, headHash, fd) {
   try {
     const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
@@ -406,7 +385,6 @@ function readSessionState(statePath, resolved, identity, size, headHash, fd) {
     if (state.headHash !== headHash) return null;
     if (!Number.isSafeInteger(state.sourceSize) || state.sourceSize < 0) return null;
     if (typeof state.sourceMtimeNs !== 'string' || typeof state.sourceCtimeNs !== 'string') return null;
-    if (state.sourceContentHash !== null && typeof state.sourceContentHash !== 'string') return null;
     if (!Number.isSafeInteger(state.offset) || state.offset < 0 || state.offset > size) return null;
     if (!Number.isFinite(state.credits) || state.credits < 0) return null;
     if (!Number.isSafeInteger(state.creditCallCount) || state.creditCallCount < 0) return null;
@@ -472,7 +450,6 @@ function getSessionUsageMetrics(transcriptPath, opts) {
     const size = stat.size;
     const identity = statIdentity(stat);
     const headHash = readHeadHash(fd, size);
-    const smallFileHash = readSmallFileHash(fd, size);
     let cached = readSessionState(statePath, resolved, identity, size, headHash, fd);
 
     // A normal append changes mtime/ctime, so timestamps cannot be part of
@@ -483,10 +460,6 @@ function getSessionUsageMetrics(transcriptPath, opts) {
     if (cached && (size < cached.sourceSize || (size === cached.sourceSize
         && (getStatTimestampNs(highResolutionStat, 'mtime') !== cached.sourceMtimeNs
           || getStatTimestampNs(highResolutionStat, 'ctime') !== cached.sourceCtimeNs)))) {
-      cached = null;
-    }
-    if (cached && size === cached.sourceSize && smallFileHash !== null
-        && smallFileHash !== cached.sourceContentHash) {
       cached = null;
     }
 
@@ -589,7 +562,6 @@ function getSessionUsageMetrics(transcriptPath, opts) {
       sourceSize: size,
       sourceMtimeNs: getStatTimestampNs(highResolutionStat, 'mtime'),
       sourceCtimeNs: getStatTimestampNs(highResolutionStat, 'ctime'),
-      sourceContentHash: smallFileHash,
       updatedAt: Date.now(),
     };
     if (!cached || processedOffset !== offset || size === 0) writeSessionState(statePath, state);

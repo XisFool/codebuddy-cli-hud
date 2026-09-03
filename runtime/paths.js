@@ -58,6 +58,10 @@ function getUpdateStatusPath() {
   return resolveCodeBuddyPath('codebuddy-hud-update-status.json');
 }
 
+function getGitCachePath() {
+  return resolveCodeBuddyPath('codebuddy-hud-git-cache.json');
+}
+
 module.exports = {
   getCodeBuddyHome,
   resolveCodeBuddyPath,
@@ -65,6 +69,7 @@ module.exports = {
   getUserConfigPath,
   getErrorLogPath,
   getCacheStatePath,
+  getGitCachePath,
   getCreditStatePath,
   getTranscriptUsageStateDir,
   getTranscriptUsageStatePath,

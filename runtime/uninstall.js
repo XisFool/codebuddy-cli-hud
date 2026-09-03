@@ -6,6 +6,7 @@ const {
   getSettingsPath,
   getUserConfigPath,
   getCacheStatePath,
+  getGitCachePath,
   getCreditStatePath,
   getTranscriptUsageStateDir,
   getSessionStatsStateDir,
@@ -19,6 +20,7 @@ function uninstall(options) {
   const backupPath = settingsPath + '.bak.codebuddy-hud';
   const userConfigPath = getUserConfigPath();
   const cachePath = getCacheStatePath();
+  const gitCachePath = getGitCachePath();
   const updateStatusPath = getUpdateStatusPath();
 
   const creditPath = getCreditStatePath();
@@ -67,6 +69,15 @@ function uninstall(options) {
     if (fs.existsSync(cachePath)) {
       fs.unlinkSync(cachePath);
       cleaned.push(`Removed cache state: ${sanitizeTerminalText(cachePath, 512)}`);
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    if (fs.existsSync(gitCachePath)) {
+      fs.unlinkSync(gitCachePath);
+      cleaned.push(`Removed git cache: ${sanitizeTerminalText(gitCachePath, 512)}`);
     }
   } catch {
     // ignore

@@ -91,25 +91,44 @@ function getLocalVersion() {
   return '0.1.0';
 }
 
-function readUpdateStatus() {
+let _cachedStatusPath = null;
+let _cachedStatus = undefined;
+
+function resetUpdateStatusCache() {
+  _cachedStatusPath = null;
+  _cachedStatus = undefined;
+}
+
+function readUpdateStatus(options = {}) {
+  const filePath = getUpdateStatusPath();
+  if (!options.forceReload && _cachedStatusPath === filePath && _cachedStatus !== undefined) {
+    return _cachedStatus;
+  }
   try {
-    const filePath = getUpdateStatusPath();
     if (fs.existsSync(filePath)) {
       const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      if (data && typeof data === 'object') return data;
+      if (data && typeof data === 'object') {
+        _cachedStatusPath = filePath;
+        _cachedStatus = data;
+        return data;
+      }
     }
   } catch {
     // ignore
   }
+  _cachedStatusPath = filePath;
+  _cachedStatus = null;
   return null;
 }
 
 function writeUpdateStatus(status) {
+  const filePath = getUpdateStatusPath();
   try {
-    const filePath = getUpdateStatusPath();
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify(status, null, 2));
+    _cachedStatusPath = filePath;
+    _cachedStatus = status;
   } catch {
     // best-effort
   }
@@ -224,6 +243,7 @@ module.exports = {
   getLocalVersion,
   readUpdateStatus,
   writeUpdateStatus,
+  resetUpdateStatusCache,
   checkForUpdates,
   spawnBackgroundUpdateCheck,
   CHECK_INTERVAL_MS,

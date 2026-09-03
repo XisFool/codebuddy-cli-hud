@@ -90,4 +90,14 @@ describe('getLogicalSessionCostData', () => {
     assert.deepEqual(getLogicalSessionCostData(input, cost(), { statePath: path.join(tmpDir, 'state.json') }), cost());
   });
 
+  it('does not rewrite state file when data is unchanged (dirty-driven)', () => {
+    const statePath = path.join(tmpDir, 'state.json');
+    sessionCost(payload(), cost());
+    const initialMtime = fs.statSync(statePath).mtimeMs;
+
+    // Second call with identical payload and cost should not touch disk
+    sessionCost(payload(), cost());
+    const secondMtime = fs.statSync(statePath).mtimeMs;
+    assert.equal(secondMtime, initialMtime);
+  });
 });

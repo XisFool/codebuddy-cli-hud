@@ -161,4 +161,38 @@ describe('update-checker', () => {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
   });
+
+  test('readUpdateStatus reuses in-memory cached result without second disk read', () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'cbhud-mem-cache-test-'));
+    const originalCodeBuddyHome = process.env.CODEBUDDY_HOME;
+    process.env.CODEBUDDY_HOME = tmpHome;
+
+    try {
+      const testPayload = {
+        updateAvailable: false,
+        latestVersion: '0.1.0',
+        localVersion: '0.1.0',
+        lastCheck: Date.now(),
+      };
+      writeUpdateStatus(testPayload);
+
+      const firstRead = readUpdateStatus();
+      assert.deepEqual(firstRead, testPayload);
+
+      // Delete file on disk: second read should still hit in-memory cache
+      const filePath = path.join(tmpHome, 'codebuddy-hud-update-status.json');
+      fs.unlinkSync(filePath);
+
+      const secondRead = readUpdateStatus();
+      assert.deepEqual(secondRead, testPayload);
+
+      // forceReload bypasses memory cache and spots deletion
+      const thirdRead = readUpdateStatus({ forceReload: true });
+      assert.equal(thirdRead, null);
+    } finally {
+      if (originalCodeBuddyHome === undefined) delete process.env.CODEBUDDY_HOME;
+      else process.env.CODEBUDDY_HOME = originalCodeBuddyHome;
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
 });

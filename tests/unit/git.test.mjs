@@ -4,7 +4,9 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 
 const require = createRequire(import.meta.url);
-const { getGitStatus, parseGitStatusOutput } = require('../../runtime/git.js');
+const fs = require('node:fs');
+const path = require('node:path');
+const { getGitStatus, parseGitStatusOutput, findGitInfo, readDirectBranch } = require('../../runtime/git.js');
 
 describe('parseGitStatusOutput', () => {
   test('clean repo: branch only, not dirty', () => {
@@ -86,5 +88,68 @@ describe('getGitStatus', () => {
   test('respects small timeout without crashing', () => {
     const result = getGitStatus(process.cwd(), 1); // 1ms might timeout or succeed
     assert.ok(result === null || typeof result === 'object');
+  });
+
+  test('findGitInfo locates .git directory in current and parent dirs', () => {
+    const info = findGitInfo(process.cwd());
+    assert.ok(info !== null);
+    assert.ok(typeof info.gitDir === 'string');
+    assert.ok(typeof info.workTree === 'string');
+  });
+
+  test('findGitInfo handles git worktree file format', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cbhud-worktree-test-'));
+    try {
+      const fakeGitDir = path.join(tmp, 'actual-git-dir');
+      fs.mkdirSync(fakeGitDir, { recursive: true });
+      fs.writeFileSync(path.join(fakeGitDir, 'HEAD'), 'ref: refs/heads/feature-wt\n');
+
+      const fakeWorkTree = path.join(tmp, 'wt');
+      fs.mkdirSync(fakeWorkTree, { recursive: true });
+      fs.writeFileSync(path.join(fakeWorkTree, '.git'), `gitdir: ${fakeGitDir}\n`);
+
+      const info = findGitInfo(fakeWorkTree);
+      assert.ok(info !== null);
+      assert.equal(path.resolve(info.gitDir), path.resolve(fakeGitDir));
+      assert.equal(path.resolve(info.workTree), path.resolve(fakeWorkTree));
+
+      const branch = readDirectBranch(info.gitDir);
+      assert.equal(branch, 'feature-wt');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('readDirectBranch handles detached commit hash', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cbhud-head-test-'));
+    try {
+      fs.writeFileSync(path.join(tmp, 'HEAD'), 'abcdef1234567890abcdef1234567890abcdef12\n');
+      const branch = readDirectBranch(tmp);
+      assert.equal(branch, 'abcdef1');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('getGitStatus uses cache for consecutive calls within TTL', () => {
+    const res1 = getGitStatus(process.cwd());
+    assert.ok(res1 !== null);
+    const start = Date.now();
+    const res2 = getGitStatus(process.cwd());
+    const duration = Date.now() - start;
+    assert.deepEqual(res2, res1);
+    assert.ok(duration < 50, `cached lookup took ${duration}ms, expected < 50ms`);
+  });
+
+  test('CODEBUDDY_HUD_NO_GIT_CACHE bypasses cache', () => {
+    const orig = process.env.CODEBUDDY_HUD_NO_GIT_CACHE;
+    process.env.CODEBUDDY_HUD_NO_GIT_CACHE = '1';
+    try {
+      const res = getGitStatus(process.cwd());
+      assert.ok(res !== null);
+    } finally {
+      if (orig === undefined) delete process.env.CODEBUDDY_HUD_NO_GIT_CACHE;
+      else process.env.CODEBUDDY_HUD_NO_GIT_CACHE = orig;
+    }
   });
 });

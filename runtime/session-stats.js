@@ -6,7 +6,6 @@ const crypto = require('crypto');
 const { getSessionStatsStatePath } = require('./paths');
 
 const SESSION_STATS_VERSION = 1;
-const STATE_REFRESH_MS = 1000;
 const CLEAR_CONTEXT_MAX_TOKENS = 2048;
 const CLEAR_CONTEXT_PREVIOUS_MIN_TOKENS = 8192;
 
@@ -194,15 +193,28 @@ function getLogicalSessionCostData(cbData, costData, opts) {
     apiDurationMs: 0,
   });
 
-  const now = Date.now();
-  if (!previous || reset || now - previous.updatedAt >= STATE_REFRESH_MS) {
+  const baselineChanged = Boolean(
+    !previous ||
+    baseline.linesAdded !== previous.baseline.linesAdded ||
+    baseline.linesRemoved !== previous.baseline.linesRemoved ||
+    baseline.totalDurationMs !== previous.baseline.totalDurationMs ||
+    baseline.apiDurationMs !== previous.baseline.apiDurationMs
+  );
+  const signalChanged = Boolean(
+    !previous ||
+    signal.totalInputTokens !== previous.signal.totalInputTokens ||
+    signal.currentInputTokens !== previous.signal.currentInputTokens
+  );
+  const isDirty = !previous || reset || sessionIdChanged || baselineChanged || signalChanged;
+
+  if (isDirty) {
     writeState(statePath, {
       version: SESSION_STATS_VERSION,
       identityHash,
       sessionIdHash,
       baseline,
       signal,
-      updatedAt: now,
+      updatedAt: Date.now(),
     });
   }
 

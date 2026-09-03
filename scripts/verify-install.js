@@ -187,6 +187,7 @@ async function main() {
       'codebuddy-hud-usage-state',
       'codebuddy-hud-session-state',
       'codebuddy-hud-cache-state.json',
+      'codebuddy-hud-git-cache.json',
       'codebuddy-hud-credit-state.json',
       'codebuddy-hud-update-status.json',
       'codebuddy-hud.config.json',
