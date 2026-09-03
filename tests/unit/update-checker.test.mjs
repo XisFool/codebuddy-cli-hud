@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const {
@@ -115,7 +116,7 @@ describe('update-checker', () => {
     const http = require('node:http');
     const { spawn } = require('node:child_process');
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'cbhud-run-check-test-'));
-    const scriptPath = path.resolve(import.meta.dirname, '../../runtime/update-checker.js');
+    const scriptPath = fileURLToPath(new URL('../../runtime/update-checker.js', import.meta.url));
 
     // Pre-lock status file as parent process would
     const lockStatus = {

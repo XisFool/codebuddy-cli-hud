@@ -7,7 +7,7 @@
     "codebuddy-hud": "runtime/bin/codebuddy-hud.js"
   },
   "scripts": {
-    "test": "node --test \"tests/unit/*.test.mjs\"",
+    "test": "node scripts/run-tests.js",
     "verify": "node scripts/verify-display.js"
   },
   "keywords": ["codebuddy", "hud", "statusline", "terminal"],

@@ -19,13 +19,23 @@ describe('i18n lang module', () => {
   });
 
   test('detectLanguage detects zh from environment variables', () => {
-    const originalEnv = process.env.LANG;
+    const savedEnv = {
+      LC_ALL: process.env.LC_ALL,
+      LC_MESSAGES: process.env.LC_MESSAGES,
+      LANG: process.env.LANG,
+      LANGUAGE: process.env.LANGUAGE,
+    };
     try {
+      delete process.env.LC_ALL;
+      delete process.env.LC_MESSAGES;
+      delete process.env.LANGUAGE;
       process.env.LANG = 'zh_CN.UTF-8';
       assert.equal(detectLanguage({ language: 'auto' }), 'zh');
     } finally {
-      if (originalEnv === undefined) delete process.env.LANG;
-      else process.env.LANG = originalEnv;
+      for (const [k, v] of Object.entries(savedEnv)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
     }
   });
 

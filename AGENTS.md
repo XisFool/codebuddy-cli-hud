@@ -37,8 +37,8 @@ scripts/verify-display.js      E2E
 ## 测试与验证命令
 
 ```bash
-# 单元测试（必须用 glob 引号形式，避免 Windows Git Bash 展开失效）
-node --test "tests/unit/*.test.mjs"
+# 单元测试（推荐 npm test，底层脚本自动向 node --test 传参，兼容 Node 18~24+）
+npm test
 npm run verify                               # 6 个 E2E 场景
 node runtime/bin/codebuddy-hud.js --status   # CLI 冒烟探测
 node runtime/bin/codebuddy-hud.js --theme list
@@ -46,7 +46,7 @@ node runtime/bin/codebuddy-hud.js --theme list
 
 ## 关键技术细节与避坑指南
 
-1. **测试命令规范**：必须保留引号 `node --test "tests/unit/*.test.mjs"`，目录形式在 Windows 下会引发假阳性 `MODULE_NOT_FOUND`。
+1. **测试命令规范**：运行 `npm test`（或 `node scripts/run-tests.js`），自动向 `node --test` 喂入全量文件路径，彻底规避 Node 18/20 对 glob 不支持及 Windows 目录形式引发假阳性 `MODULE_NOT_FOUND` 的问题。
 2. **Windows `.cmd` Shim**：烘焙安装时的 `process.execPath` 绝对路径（`statusline-installer.js`），不依赖系统 PATH；路径中 `%` 批量转义为 `%%`。
 3. **终端编码探测缓存**：`chcp.com` 探测结果缓存在 `~/.codebuddy/codebuddy-hud-cache-state.json`（`encoding.js`）；`CODEBUDDY_HUD_FORCE_ASCII/UNICODE` 优先于缓存。
 4. **错误日志轮转**：`~/.codebuddy/codebuddy-hud-error.log` 超过 1MB 自动重置，防高频刷新写满磁盘。
