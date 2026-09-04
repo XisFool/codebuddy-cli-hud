@@ -24,19 +24,19 @@
 👉 查看 [**`module-reference.md`**](module-reference.md)，按模块目录索引查阅参数与返回值契约。
 
 ### ⚡ 遇到高频触发下的并发与子进程问题
-👉 查看 [**`architecture.md#54-background-update-stampede-prevention-pre-locking`**](architecture.md#54-background-update-stampede-prevention-pre-locking) 了解预占位锁机制。
+👉 查看 [**`architecture.md#54-background-update-stampede-prevention-update-checkerjs`**](architecture.md#54-background-update-stampede-prevention-update-checkerjs) 了解预占位锁机制。
 
 ### 🔄 会话 `/clear` 后指标未重置或 Token 统计异常
-👉 查看 [**`architecture.md#52-session-baseline-tracking--clear-detection`**](architecture.md#52-session-baseline-tracking--clear-detection) 与 [**`module-reference.md#10-runtimesession-statsjs`**](module-reference.md#10-runtimesession-statsjs)。
+👉 查看 [**`architecture.md#52-session-baseline-tracking--clear-detection-session-statsjs`**](architecture.md#52-session-baseline-tracking--clear-detection-session-statsjs) 与 [**`module-reference.md#10-runtimesession-statsjs--会话基线与-clear-重置状态机`**](module-reference.md#10-runtimesession-statsjs--会话基线与-clear-重置状态机)。
 
 ### 📊 Prompt Cache 命中率或实际 Credits 消费显示偏差
-👉 查看 [**`architecture.md#51-reverse-sliding-window-transcript-scanning`**](architecture.md#51-reverse-sliding-window-transcript-scanning) 与 [**`module-reference.md#9-runtimetranscriptjs`**](module-reference.md#9-runtimetranscriptjs)。
+👉 查看 [**`architecture.md#51-reverse-sliding-window-transcript-scanning-transcriptjs`**](architecture.md#51-reverse-sliding-window-transcript-scanning-transcriptjs) 与 [**`module-reference.md#9-runtimetranscriptjs--逆向滑窗遥测与-checkpoint-状态机`**](module-reference.md#9-runtimetranscriptjs--逆向滑窗遥测与-checkpoint-状态机)。
 
 ### 🖥️ Windows 终端出现乱码、路径找不到或 `.cmd` 执行失败
-👉 查看 [**`architecture.md#8-cross-platform--zero-dependency-guarantees`**](architecture.md#8-cross-platform--zero-dependency-guarantees) 与 [**`module-reference.md#14-runtimestatusline-installerjs`**](module-reference.md#14-runtimestatusline-installerjs)。
+👉 查看 [**`architecture.md#8-cross-platform--zero-dependency-guarantees`**](architecture.md#8-cross-platform--zero-dependency-guarantees) 与 [**`module-reference.md#15-runtimestatusline-installerjs--状态栏注册与-shim-烘焙`**](module-reference.md#15-runtimestatusline-installerjs--状态栏注册与-shim-烘焙)。
 
 ### 🛡️ 终端出现异常字符或格式错乱
-👉 查看 [**`architecture.md#6-security-threat-model--terminal-defense`**](architecture.md#6-security-threat-model--terminal-defense) 与 [**`module-reference.md#13-runtimesanitizejs`**](module-reference.md#13-runtimesanitizejs)。
+👉 查看 [**`architecture.md#6-security-threat-model--terminal-defense`**](architecture.md#6-security-threat-model--terminal-defense) 与 [**`module-reference.md#13-runtimesanitizejs--终端文本安全清洗器`**](module-reference.md#13-runtimesanitizejs--终端文本安全清洗器)。
 
 ---
 
@@ -66,23 +66,23 @@
 
 | 源代码路径 | 核心职责 | 对应架构文档 | 对应模块手册 |
 | :--- | :--- | :--- | :--- |
-| `runtime/bin/codebuddy-hud.js` | CLI 入口、参数解析、管道超时与生命周期排空 | [architecture.md §4](architecture.md#4-execution-flow-per-agent-step) | [module-reference.md §1](module-reference.md#1-runtimebincodebuddy-hudjs--cli-entrypoint) |
-| `runtime/parser.js` | 宿主 Stdin JSON 提取与边界容错 | [architecture.md §4](architecture.md#4-execution-flow-per-agent-step) | [module-reference.md §2](module-reference.md#2-runtimeparserjs--payload-parser) |
-| `runtime/config.js` | 多层级配置合并与主题调色板解析 | [architecture.md §5.5](architecture.md#55-multi-layer-configuration--theme-palette-engine) | [module-reference.md §3](module-reference.md#3-runtimeconfigjs--configuration--theme-engine) |
-| `runtime/renderer.js` | 4 行状态栏看板排版与组装编排 | [architecture.md §5.6](architecture.md#56-4-line-adaptive-layout--terminal-safe-rendering) | [module-reference.md §4](module-reference.md#4-runtimerendererjs--hud-layout-orchestrator) |
-| `runtime/renderer/format.js` | Token 格式化、进度条、Cache 命中率徽标生成 | [architecture.md §5.6](architecture.md#56-4-line-adaptive-layout--terminal-safe-rendering) | [module-reference.md §5](module-reference.md#5-runtimerendererformatjs--formatting-helpers) |
-| `runtime/renderer/diff-render.js` | Line 3 代码增删、Credits 与耗时渲染 | [architecture.md §5.6](architecture.md#56-4-line-adaptive-layout--terminal-safe-rendering) | [module-reference.md §6](module-reference.md#6-runtimerendererdiff-renderjs--diff--cost-segment) |
-| `runtime/renderer/agents-render.js`| Line 4 子代理状态与工具调用频次聚合 | [architecture.md §5.6](architecture.md#56-4-line-adaptive-layout--terminal-safe-rendering) | [module-reference.md §7](module-reference.md#7-runtimerendereragents-renderjs--agent--tool-segment) |
-| `runtime/renderer/lang.js` | 中英双语国际化字典与语言探测 | [architecture.md §7](architecture.md#7-internationalization-i18n-subsystem) | [module-reference.md §8](module-reference.md#8-runtimerendererlangjs--i18n-dictionary) |
-| `runtime/transcript.js` | 逆向滑窗遥测、跨块拼装与增量 Checkpoint | [architecture.md §5.1, §5.3](architecture.md#51-reverse-sliding-window-transcript-scanning) | [module-reference.md §9](module-reference.md#9-runtimetranscriptjs--telemetry-scanner) |
-| `runtime/session-stats.js` | `/clear` 会话基线捕获与指标差值管理 | [architecture.md §5.2](architecture.md#52-session-baseline-tracking--clear-detection) | [module-reference.md §10](module-reference.md#10-runtimesession-statsjs--session-baseline-tracker) |
-| `runtime/git.js` | Git 分支与脏状态非阻塞探测 | [architecture.md §8](architecture.md#8-cross-platform--zero-dependency-guarantees) | [module-reference.md §11](module-reference.md#11-runtimegitjs--git-environment-probe) |
-| `runtime/encoding.js` | Unicode/ASCII/NerdFonts 探测与 Windows 缓存 | [architecture.md §8](architecture.md#8-cross-platform--zero-dependency-guarantees) | [module-reference.md §12](module-reference.md#12-runtimeencodingjs--terminal-charset-probe) |
-| `runtime/sanitize.js` | 终端文本 ANSI CSI/OSC/Bidi 注入拦截 | [architecture.md §6](architecture.md#6-security-threat-model--terminal-defense) | [module-reference.md §13](module-reference.md#13-runtimesanitizejs--terminal-security-filter) |
-| `runtime/statusline-installer.js` | `settings.json` 配置与 Windows `.cmd` 绝对路径烘焙 | [architecture.md §8](architecture.md#8-cross-platform--zero-dependency-guarantees) | [module-reference.md §14](module-reference.md#14-runtimestatusline-installerjs--installer) |
-| `runtime/doctor.js` | `--doctor` 5 维度环境体检与物理路径强校验 | [architecture.md §7](architecture.md#7-diagnostic-and-troubleshooting-system) | [module-reference.md §15](module-reference.md#15-runtimedoctorjs--environment-doctor) |
-| `runtime/update-checker.js` | 24h 异步版本检查与防惊群预占位锁 | [architecture.md §5.4](architecture.md#54-background-update-stampede-prevention-pre-locking) | [module-reference.md §16](module-reference.md#16-runtimeupdate-checkerjs--update-checker) |
-| `runtime/uninstall.js` | 状态栏恢复、Shim 移除与持久化状态深度清理 | [architecture.md §8](architecture.md#8-cross-platform--zero-dependency-guarantees) | [module-reference.md §17](module-reference.md#17-runtimeuninstalljs--cleaner) |
-| `scripts/bootstrap.js` | 远程/本地安装器、临时目录原子替换 | [architecture.md §2](architecture.md#2-two-layer-physical-design) | [module-reference.md §18](module-reference.md#18-scriptsbootstrapjs--atomic-installer) |
-| `scripts/verify-display.js` | 端到端 E2E 渲染校验与 4 行/超时守卫 | [architecture.md §9](architecture.md#9-quality-assurance--testing-matrix) | [module-reference.md §19](module-reference.md#19-scriptsverify-displayjs--e2e-verifier) |
-| `skills/hud-config/SKILL.md` | AI Agent 交互式主题与配置技能 | [architecture.md §2](architecture.md#2-two-layer-physical-design) | [module-reference.md §20](module-reference.md#20-skillshud-configskillmd--ai-agent-skill) |
+| `runtime/bin/codebuddy-hud.js` | CLI 入口、参数解析、管道超时与生命周期排空 | [architecture.md §4](architecture.md#4-execution-flow-per-agent-step) | [module-reference.md §1](module-reference.md#1-runtimebincodebuddy-hudjs--cli-入口与执行调度器) |
+| `runtime/parser.js` | 宿主 Stdin JSON 提取与边界容错 | [architecture.md §4](architecture.md#4-execution-flow-per-agent-step) | [module-reference.md §2](module-reference.md#2-runtimeparserjs--宿主输入解析与边界清洗) |
+| `runtime/config.js` | 多层级配置合并与主题调色板解析 | [architecture.md §5.5](architecture.md#55-multi-layer-configuration--theme-engine-configjs) | [module-reference.md §3](module-reference.md#3-runtimeconfigjs--多层配置合并与主题引擎) |
+| `runtime/renderer.js` | 4 行状态栏看板排版与组装编排 | [architecture.md §5.6](architecture.md#56-4-line-adaptive-layout--pruning-rendererjs) | [module-reference.md §4](module-reference.md#4-runtimerendererjs--4-行看板装配与布局编排) |
+| `runtime/renderer/format.js` | Token 格式化、进度条、Cache 命中率徽标生成 | [architecture.md §5.6](architecture.md#56-4-line-adaptive-layout--pruning-rendererjs) | [module-reference.md §5](module-reference.md#5-runtimerendererformatjs--格式化进度条与-cache-徽标) |
+| `runtime/renderer/diff-render.js` | Line 3 代码增删、Credits 与耗时渲染 | [architecture.md §5.6](architecture.md#56-4-line-adaptive-layout--pruning-rendererjs) | [module-reference.md §6](module-reference.md#6-runtimerendererdiff-renderjs--代码变更credits-与耗时渲染) |
+| `runtime/renderer/agents-render.js`| Line 4 子代理状态与工具调用频次聚合 | [architecture.md §5.6](architecture.md#56-4-line-adaptive-layout--pruning-rendererjs) | [module-reference.md §7](module-reference.md#7-runtimerendereragents-renderjs--子代理与工具活动聚合渲染) |
+| `runtime/renderer/lang.js` | 中英双语国际化字典与语言探测 | [architecture.md §3](architecture.md#3-module-dependency-graph) | [module-reference.md §8](module-reference.md#8-runtimerendererlangjs--runtimelangjs--多语言国际化) |
+| `runtime/transcript.js` | 逆向滑窗遥测、跨块拼装与增量 Checkpoint | [architecture.md §5.1, §5.3](architecture.md#51-reverse-sliding-window-transcript-scanning-transcriptjs) | [module-reference.md §9](module-reference.md#9-runtimetranscriptjs--逆向滑窗遥测与-checkpoint-状态机) |
+| `runtime/session-stats.js` | `/clear` 会话基线捕获与指标差值管理 | [architecture.md §5.2](architecture.md#52-session-baseline-tracking--clear-detection-session-statsjs) | [module-reference.md §10](module-reference.md#10-runtimesession-statsjs--会话基线与-clear-重置状态机) |
+| `runtime/git.js` | Git 分支与脏状态非阻塞探测 | [architecture.md §8](architecture.md#8-cross-platform--zero-dependency-guarantees) | [module-reference.md §11](module-reference.md#11-runtimegitjs--git-分支与状态探测器) |
+| `runtime/encoding.js` | Unicode/ASCII/NerdFonts 探测与 Windows 缓存 | [architecture.md §8](architecture.md#8-cross-platform--zero-dependency-guarantees) | [module-reference.md §12](module-reference.md#12-runtimeencodingjs--终端字符集探测与编码缓存) |
+| `runtime/sanitize.js` | 终端文本 ANSI CSI/OSC/Bidi 注入拦截 | [architecture.md §6](architecture.md#6-security-threat-model--terminal-defense) | [module-reference.md §13](module-reference.md#13-runtimesanitizejs--终端文本安全清洗器) |
+| `runtime/statusline-installer.js` | `settings.json` 配置与 Windows `.cmd` 绝对路径烘焙 | [architecture.md §8](architecture.md#8-cross-platform--zero-dependency-guarantees) | [module-reference.md §15](module-reference.md#15-runtimestatusline-installerjs--状态栏注册与-shim-烘焙) |
+| `runtime/doctor.js` | `--doctor` 5 维度环境体检与物理路径强校验 | [architecture.md §7](architecture.md#7-system-failure-modes--degradation-matrix) | [module-reference.md §16](module-reference.md#16-runtimedoctorjs--环境体检与排障诊断) |
+| `runtime/update-checker.js` | 24h 异步版本检查与防惊群预占位锁 | [architecture.md §5.4](architecture.md#54-background-update-stampede-prevention-update-checkerjs) | [module-reference.md §17](module-reference.md#17-runtimeupdate-checkerjs--异步更新检查与防惊群锁) |
+| `runtime/uninstall.js` | 状态栏恢复、Shim 移除与持久化状态深度清理 | [architecture.md §8](architecture.md#8-cross-platform--zero-dependency-guarantees) | [module-reference.md §19](module-reference.md#19-runtimeuninstalljs--卸载还原与深度清理) |
+| `scripts/bootstrap.js` | 远程/本地安装器、临时目录原子替换 | [architecture.md §2](architecture.md#2-two-layer-physical-design) | [module-reference.md §20](module-reference.md#20-scriptsbootstrapjs--跨平台原子安装引导) |
+| `scripts/verify-display.js` | 端到端 E2E 渲染校验与 4 行/超时守卫 | — | [module-reference.md §21](module-reference.md#21-scriptsverify-displayjs--看板端到端验证) |
+| `skills/hud-config/SKILL.md` | AI Agent 交互式主题与配置技能 | — | [module-reference.md §22](module-reference.md#22-skillshud-configskillmd--hud-配置技能) |

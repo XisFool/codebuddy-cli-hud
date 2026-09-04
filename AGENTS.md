@@ -69,6 +69,13 @@ node runtime/bin/codebuddy-hud.js --theme list
 
 ## 提交风格
 
-- 提交前先跑 `node --test "tests/unit/*.test.mjs"`（297 个用例应全绿）及 `npm run verify`；
+- 提交前先跑 `npm test`、`npm run verify` 与 `npm run verify:install`；当前单元测试基线为 335 个用例全绿。
 - Commit message 必须使用中文。
+
+## 发布流程
+
+1. 更新 `package.json` 版本与 `CHANGELOG.md`，并完成全部验证命令。
+2. 在发布提交上创建带注释的 `vX.Y.Z` tag，推送 `master` 与 tag。
+3. 以该 tag 创建正式 GitHub Release；默认安装和更新检查均以 Latest Release 的 `tag_name` 为准。
+4. 从公开 Release 下载 Bootstrap，在隔离 `CODEBUDDY_HOME` 中执行真实远程安装，确认 `--status` 退出码为 0。
 
