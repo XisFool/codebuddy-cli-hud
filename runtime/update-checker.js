@@ -8,7 +8,9 @@ const { spawn } = require('child_process');
 const { getUpdateStatusPath } = require('./paths');
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const REMOTE_PKG_URL = process.env.CODEBUDDY_HUD_REMOTE_PKG_URL || 'https://raw.githubusercontent.com/XisFool/codebuddy-hud/master/package.json';
+const LATEST_RELEASE_URL = process.env.CODEBUDDY_HUD_LATEST_RELEASE_URL ||
+  process.env.CODEBUDDY_HUD_REMOTE_PKG_URL ||
+  'https://api.github.com/repos/XisFool/codebuddy-hud/releases/latest';
 
 function parseSemver(v) {
   if (typeof v !== 'string') return [0, 0, 0];
@@ -134,7 +136,7 @@ function writeUpdateStatus(status) {
   }
 }
 
-function fetchRemotePackageJson(url) {
+function fetchJson(url) {
   return new Promise((resolve, reject) => {
     const client = url.startsWith('https') ? https : http;
     const req = client.get(url, { headers: { 'User-Agent': 'codebuddy-hud-update-checker' } }, (res) => {
@@ -159,6 +161,14 @@ function fetchRemotePackageJson(url) {
   });
 }
 
+function getReleaseVersion(release) {
+  if (!release || typeof release !== 'object') return null;
+  if (typeof release.tag_name === 'string') return release.tag_name;
+  // Keep the old package.json override working for test and private mirrors.
+  if (typeof release.version === 'string') return release.version;
+  return null;
+}
+
 async function checkForUpdates(options) {
   const opts = options || {};
   const force = !!opts.force;
@@ -174,9 +184,10 @@ async function checkForUpdates(options) {
   let updateAvailable = false;
 
   try {
-    const remotePkg = await fetchRemotePackageJson(opts.url || REMOTE_PKG_URL);
-    if (remotePkg && typeof remotePkg.version === 'string') {
-      latestVersion = remotePkg.version;
+    const release = await fetchJson(opts.url || LATEST_RELEASE_URL);
+    const releaseVersion = getReleaseVersion(release);
+    if (releaseVersion) {
+      latestVersion = releaseVersion;
       updateAvailable = compareVersions(latestVersion, localVersion) > 0;
     }
   } catch (err) {
@@ -245,6 +256,7 @@ module.exports = {
   readUpdateStatus,
   writeUpdateStatus,
   resetUpdateStatusCache,
+  getReleaseVersion,
   checkForUpdates,
   spawnBackgroundUpdateCheck,
   CHECK_INTERVAL_MS,
